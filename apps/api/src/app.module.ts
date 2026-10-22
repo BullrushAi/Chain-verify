@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+﻿import { Module } from '@nestjs/common';
 import { RateLimitingModule } from './common/rate-limiting.module.js';
 import { DatabaseModule } from './modules/database/database.module.js';
 import { ChainVerifyAdaptersModule } from './modules/adapters/adapters.module.js';
@@ -7,6 +7,8 @@ import { VerificationModule } from './modules/verification/verification.module.j
 import { AdminModule } from './modules/admin/admin.module.js';
 import { BillingModule } from './modules/billing/billing.module.js';
 import { ContactModule } from './modules/contact/contact.module.js';
+import { UserDashboardModule } from './modules/user-dashboard/user-dashboard.module.js';
 
-@Module({imports:[RateLimitingModule,DatabaseModule,ChainVerifyAdaptersModule,VerificationModule,InvoiceProofModule,AdminModule,BillingModule,ContactModule]})
+@Module({imports:[RateLimitingModule,DatabaseModule,ChainVerifyAdaptersModule,VerificationModule,InvoiceProofModule,AdminModule,BillingModule,ContactModule,UserDashboardModule]})
 export class AppModule {}
+
