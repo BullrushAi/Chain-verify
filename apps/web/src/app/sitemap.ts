@@ -4,6 +4,7 @@ export default function sitemap() {
     { url: 'https://chainverify.org/agent-gate', changeFrequency: 'weekly', priority: 0.9 },
     { url: 'https://chainverify.org/audit-proof', changeFrequency: 'weekly', priority: 0.9 },
     { url: 'https://chainverify.org/invoice-proof', changeFrequency: 'weekly', priority: 0.9 },
+    { url: 'https://chainverify.org/dashboard', changeFrequency: 'weekly', priority: 0.7 },
     { url: 'https://chainverify.org/contact', changeFrequency: 'monthly', priority: 0.6 },
     { url: 'https://chainverify.org/security', changeFrequency: 'monthly', priority: 0.5 },
     { url: 'https://chainverify.org/privacy', changeFrequency: 'monthly', priority: 0.4 },

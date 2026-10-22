@@ -12,6 +12,7 @@ const anchors = [
   { href: '#how-it-works', label: 'How it works', collapses: true },
   { href: '#plans', label: 'Plans', collapses: true },
   { href: '#faq', label: 'FAQ', collapses: true },
+  { href: '/dashboard', label: 'Dashboard', collapses: false },
 ] as const;
 
 export function LandingNav() {
