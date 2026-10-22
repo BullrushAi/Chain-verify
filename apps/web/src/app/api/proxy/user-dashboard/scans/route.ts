@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 const API_BASE = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -8,8 +8,9 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
   const apiKeyHeader = request.headers.get('x-chain-verify-api-key') || request.headers.get('authorization') || '';
   const apiKey = apiKeyHeader.replace('Bearer ', '');
+  const search = request.nextUrl.searchParams.toString();
   try {
-    const res = await fetch(API_BASE + '/user-dashboard/scans', {
+    const res = await fetch(API_BASE + '/user-dashboard/scans' + (search ? '?' + search : ''), {
       headers: apiKey ? { Authorization: 'Bearer ' + apiKey } : {},
       cache: 'no-store',
     });
