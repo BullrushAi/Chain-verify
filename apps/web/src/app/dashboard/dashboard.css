@@ -1,0 +1,30 @@
+/* User dashboard (org portal) layout and components.
+   Companion to ../invoice-proof/invoice-proof-app.css: same .ipa- scope,
+   same global --cv-* tokens, same spacing and type scale. */
+
+.ipa-stack { display: flex; flex-direction: column; gap: 22px; }
+
+.ipa-panel {
+  background: var(--cv-surface-solid);
+  border: 1px solid var(--cv-line);
+  border-radius: 14px;
+  padding: 18px 20px;
+}
+
+.ipa-h1 { margin: 0; font-size: 28px; font-weight: 760; letter-spacing: -0.02em; }
+.ipa-h2 { margin: 0 0 10px; font-size: 16px; }
+
+/* KPI grid */
+.ipa-grid { display: grid; gap: 14px; }
+.ipa-grid-3 { grid-template-columns: repeat(3, 1fr); }
+.ipa-kpi { font-size: 28px; font-weight: 760; letter-spacing: -0.02em; }
+.ipa-kpi-label { margin-top: 4px; font-size: 12px; color: var(--cv-muted); }
+
+/* Errors and secondary buttons */
+.ipa-error { margin: 0 0 12px; font-size: 13px; line-height: 1.55; color: var(--cv-danger); }
+.ipa-btn-secondary { background: transparent; color: var(--cv-muted); }
+.ipa-btn-secondary:hover:not(:disabled) { color: var(--cv-text); }
+
+@media (max-width: 720px) {
+  .ipa-grid-3 { grid-template-columns: 1fr; }
+}
