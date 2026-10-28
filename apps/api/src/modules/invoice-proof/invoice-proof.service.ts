@@ -695,6 +695,23 @@ export class InvoiceProofService {
         };
       }
 
+      // Two-totals fix: an ambiguous amount (conflicting final totals, no
+      // reconciling relationship) must NEVER reach the fraud engine -- even
+      // when bank fields are present. The old gate ran the provisional scan
+      // on bank fields alone and pdfFieldsToInvoice substituted 0 for the
+      // missing amount. Stop here: scan null, no quota consumed.
+      if (extraction.fields.amountAmbiguity) {
+        return {
+          status: 'NEEDS_REVIEW',
+          ok: true,
+          message:
+            'Conflicting final totals on this document -- the authoritative amount was withheld. ' +
+            'Review the original document and correct the amount, then submit for scanning.',
+          extraction,
+          scan: null,
+        };
+      }
+
       // OCR NEEDS_REVIEW: the "needs review" status is a signal that a human
       // should double-check the EXTRACTED FIELDS before trusting them — it is
       // NOT a reason to withhold the fraud engine's own findings from that

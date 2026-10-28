@@ -138,3 +138,188 @@ describe('extractInvoiceFieldsFromText', () => {
     });
   });
 });
+
+describe('conflicting final totals (two-totals fix)', () => {
+  // Regression input is the verbatim OCR text from the failed desktop OCR run
+  // (chainverify-real-ocr-desktop epoch 1): the application claimed 1234.56.
+  const TWO_TOTALS_OCR_TEXT =
+    'INVOICE\n\nVendor: SYNTHETIC TEST VENDOR LLC\nInvoice Number: INV-SYNTH-2026-001\nDate: October 27, 2026\n\nAmount Due: $1,234.56\n\nTotal: $9,999.99\n';
+
+  it('withholds the amount and reasons on conflicting Amount Due vs Total', () => {
+    const r = extractInvoiceFieldsFromText(TWO_TOTALS_OCR_TEXT, 1);
+    expect(r.fields.amount).toBeUndefined();
+    expect(r.fields.amountAmbiguity).toMatch(/Amount Due vs Total/);
+    expect(r.status).toBe('NEEDS_REVIEW');
+    expect(r.warnings.join(' ')).toMatch(/Conflicting final totals/);
+  });
+
+  it('withholds on conflicting tier-1 labels with no paid relationship', () => {
+    const text =
+      'Vendor: Acme Co\nInvoice #: INV-1\nDate: 03/14/2026\nAmount Due: $100.00\nBalance Due: $200.00\n';
+    const r = extractInvoiceFieldsFromText(text, 1);
+    expect(r.fields.amount).toBeUndefined();
+    expect(r.fields.amountAmbiguity).toMatch(/Conflicting final totals/);
+  });
+
+  it('still claims the reconciled total for subtotal + tax + total', () => {
+    const text =
+      'Vendor: Acme Co\nInvoice #: INV-2\nDate: 03/14/2026\nSubtotal: $1,000.00\nTax: $80.00\nTotal: $1,080.00\n';
+    const r = extractInvoiceFieldsFromText(text, 1);
+    expect(r.fields.amount).toBe(1080);
+    expect(r.fields.amountAmbiguity).toBeUndefined();
+  });
+
+  it('preserves the partial-payment relationship (Total minus Paid equals Balance)', () => {
+    const text =
+      'Vendor: Acme Co\nInvoice #: INV-3\nDate: 03/14/2026\nTotal: $1,000.00\nAmount Paid: $400.00\nBalance Due: $600.00\n';
+    const r = extractInvoiceFieldsFromText(text, 1);
+    expect(r.fields.amount).toBe(600);
+    expect(r.fields.amountAmbiguity).toBeUndefined();
+  });
+
+  it('claims when the same value appears under several total labels', () => {
+    const text =
+      'Vendor: Acme Co\nInvoice #: INV-4\nDate: 03/14/2026\nAmount Due: $1,080.00\nTotal: $1,080.00\n';
+    const r = extractInvoiceFieldsFromText(text, 1);
+    expect(r.fields.amount).toBe(1080);
+    expect(r.fields.amountAmbiguity).toBeUndefined();
+  });
+
+  it('keeps the tier-3 bare-amount fallback when no final-total label exists', () => {
+    const text =
+      'Vendor: Acme Co\nInvoice #: INV-5\nDate: 03/14/2026\nAmount: $250.00\n';
+    const r = extractInvoiceFieldsFromText(text, 1);
+    expect(r.fields.amount).toBe(250);
+    expect(r.fields.amountAmbiguity).toBeUndefined();
+  });
+
+  it('withholds the amount but keeps bank fields on conflicting totals with bank details', () => {
+    const text = TWO_TOTALS_OCR_TEXT + 'Routing #: 021000021\nAccount #: ****6789\n';
+    const r = extractInvoiceFieldsFromText(text, 1);
+    expect(r.fields.amount).toBeUndefined();
+    expect(r.fields.amountAmbiguity).toMatch(/Conflicting final totals/);
+    expect(r.fields.bankRouting).toBe('021000021');
+    expect(r.fields.bankAccountLast4).toBe('6789');
+  });
+});
+
+function targetedInvoice(body: string) {
+  return 'Acme Industrial Supply\nInvoice #: INV-TARGET-1\nInvoice Date: 03/14/2026\n' + body;
+}
+
+describe('targeted acceptance: label-invariant partial payment and explicit zero (v1.1-targeted)', () => {
+  it('partial: Total 1000, Paid 400, Amount Due 600 claims 600', () => {
+    const r = extractInvoiceFieldsFromText(targetedInvoice('Total: $1,000.00\nPaid: $400.00\nAmount Due: $600.00\n'), 1);
+    expect(r.fields.amountAmbiguity).toBeUndefined();
+    expect(r.fields.amount).toBe(600);
+  });
+  it('partial: Invoice Total 1000, Paid 400, Amount Due 600 claims 600, not 1000', () => {
+    const r = extractInvoiceFieldsFromText(targetedInvoice('Invoice Total: $1,000.00\nPaid: $400.00\nAmount Due: $600.00\n'), 1);
+    expect(r.fields.amountAmbiguity).toBeUndefined();
+    expect(r.fields.amount).toBe(600);
+  });
+  it('partial: Grand Total 1000, Paid 400, Amount Due 600 claims 600, not 1000', () => {
+    const r = extractInvoiceFieldsFromText(targetedInvoice('Grand Total: $1,000.00\nPaid: $400.00\nAmount Due: $600.00\n'), 1);
+    expect(r.fields.amountAmbiguity).toBeUndefined();
+    expect(r.fields.amount).toBe(600);
+  });
+  it('control: Total 1000, Paid 400, Balance Due 600 claims 600', () => {
+    const r = extractInvoiceFieldsFromText(targetedInvoice('Total: $1,000.00\nPaid: $400.00\nBalance Due: $600.00\n'), 1);
+    expect(r.fields.amountAmbiguity).toBeUndefined();
+    expect(r.fields.amount).toBe(600);
+  });
+  it('fully paid: Total 1000, Paid 1000, Amount Due 0 preserves explicit zero, not 1000', () => {
+    const r = extractInvoiceFieldsFromText(targetedInvoice('Total: $1,000.00\nPaid: $1,000.00\nAmount Due: $0.00\n'), 1);
+    expect(r.fields.amountAmbiguity).toBeUndefined();
+    expect(r.fields.amount).toBe(0);
+  });
+  it('clean: Subtotal 1000, Tax 80, Total 1080, Balance Due 1080 claims 1080', () => {
+    const r = extractInvoiceFieldsFromText(targetedInvoice('Subtotal: $1,000.00\nTax: $80.00\nTotal: $1,080.00\nBalance Due: $1,080.00\n'), 1);
+    expect(r.fields.amountAmbiguity).toBeUndefined();
+    expect(r.fields.amount).toBe(1080);
+  });
+  it('line items: 500 plus 500 with Total 1000 claims 1000 and lineItemsTotal 1000', () => {
+    const r = extractInvoiceFieldsFromText(targetedInvoice('Widget A $500.00\nWidget B $500.00\nTotal: $1,000.00\n'), 1);
+    expect(r.fields.amountAmbiguity).toBeUndefined();
+    expect(r.fields.amount).toBe(1000);
+    expect(r.fields.lineItemsTotal).toBe(1000);
+  });
+});
+
+describe('label-role validation (v1.2)', () => {
+  it('withholds when Invoice Total 600, Paid 400, Balance Due 1000 cannot reconcile (600-400 is not 1000)', () => {
+    const r = extractInvoiceFieldsFromText(targetedInvoice('Invoice Total: $600.00\nAmount Paid: $400.00\nBalance Due: $1,000.00\n'), 1);
+    expect(r.fields.amount).toBeUndefined();
+    expect(r.fields.amountAmbiguity).toMatch(/Conflicting final totals/);
+    expect(r.status).toBe('NEEDS_REVIEW');
+  });
+  it('withholds on two distinct due values: Amount Due 1000 vs Balance Due 600 with Paid 400', () => {
+    const r = extractInvoiceFieldsFromText(targetedInvoice('Amount Due: $1,000.00\nBalance Due: $600.00\nPaid: $400.00\n'), 1);
+    expect(r.fields.amount).toBeUndefined();
+    expect(r.fields.amountAmbiguity).toMatch(/Conflicting final totals/);
+    expect(r.status).toBe('NEEDS_REVIEW');
+  });
+  it('withholds on two distinct gross values: Invoice Total 1000 vs Grand Total 600 with Paid 400', () => {
+    const r = extractInvoiceFieldsFromText(targetedInvoice('Invoice Total: $1,000.00\nGrand Total: $600.00\nPaid: $400.00\n'), 1);
+    expect(r.fields.amount).toBeUndefined();
+    expect(r.fields.amountAmbiguity).toMatch(/Conflicting final totals/);
+    expect(r.status).toBe('NEEDS_REVIEW');
+  });
+  it('withholds when a second due value contradicts the reconciled due: Total 1000, Paid 400, Amount Due 600, Balance Due 1000', () => {
+    const r = extractInvoiceFieldsFromText(targetedInvoice('Total: $1,000.00\nPaid: $400.00\nAmount Due: $600.00\nBalance Due: $1,000.00\n'), 1);
+    expect(r.fields.amount).toBeUndefined();
+    expect(r.fields.amountAmbiguity).toMatch(/Conflicting final totals/);
+    expect(r.status).toBe('NEEDS_REVIEW');
+  });
+  it('withholds on multiple distinct paid values: Total 1000, Payment Received 400, Payment Received 100, Balance Due 600', () => {
+    const r = extractInvoiceFieldsFromText(targetedInvoice('Total: $1,000.00\nPayment Received: $400.00\nPayment Received: $100.00\nBalance Due: $600.00\n'), 1);
+    expect(r.fields.amount).toBeUndefined();
+    expect(r.fields.amountAmbiguity).toBeDefined();
+    expect(r.status).toBe('NEEDS_REVIEW');
+  });
+  it('withholds on multiple distinct paid values in reversed order: Total 1000, Payment Received 100, Payment Received 400, Balance Due 600', () => {
+    const r = extractInvoiceFieldsFromText(targetedInvoice('Total: $1,000.00\nPayment Received: $100.00\nPayment Received: $400.00\nBalance Due: $600.00\n'), 1);
+    expect(r.fields.amount).toBeUndefined();
+    expect(r.fields.amountAmbiguity).toBeDefined();
+    expect(r.status).toBe('NEEDS_REVIEW');
+  });
+});
+
+describe('due-label synonyms (v1.3)', () => {
+  it('partial: Invoice Total 1000, Paid 400, Total Due 600 claims 600', () => {
+    const r = extractInvoiceFieldsFromText(targetedInvoice('Invoice Total: $1,000.00\nPaid: $400.00\nTotal Due: $600.00\n'), 1);
+    expect(r.fields.amountAmbiguity).toBeUndefined();
+    expect(r.fields.amount).toBe(600);
+  });
+  it('partial: Invoice Total 1000, Paid 400, Total Amount Due 600 claims 600', () => {
+    const r = extractInvoiceFieldsFromText(targetedInvoice('Invoice Total: $1,000.00\nPaid: $400.00\nTotal Amount Due: $600.00\n'), 1);
+    expect(r.fields.amountAmbiguity).toBeUndefined();
+    expect(r.fields.amount).toBe(600);
+  });
+  it('fully paid: Total 1000, Paid 1000, Total Due 0 preserves explicit zero, not 1000', () => {
+    const r = extractInvoiceFieldsFromText(targetedInvoice('Total: $1,000.00\nPaid: $1,000.00\nTotal Due: $0.00\n'), 1);
+    expect(r.fields.amountAmbiguity).toBeUndefined();
+    expect(r.fields.amount).toBe(0);
+  });
+  it('fully paid: Total 1000, Paid 1000, Total Amount Due 0 preserves explicit zero, not 1000', () => {
+    const r = extractInvoiceFieldsFromText(targetedInvoice('Total: $1,000.00\nPaid: $1,000.00\nTotal Amount Due: $0.00\n'), 1);
+    expect(r.fields.amountAmbiguity).toBeUndefined();
+    expect(r.fields.amount).toBe(0);
+  });
+});
+
+
+describe('paid-zero contradiction (v1.4)', () => {
+  it('withholds when Amount Paid 400 contradicts Total Paid 0: Invoice Total 1000, Balance Due 600', () => {
+    const r = extractInvoiceFieldsFromText(targetedInvoice('Invoice Total: $1,000.00\nAmount Paid: $400.00\nTotal Paid: $0.00\nBalance Due: $600.00\n'), 1);
+    expect(r.fields.amount).toBeUndefined();
+    expect(r.fields.amountAmbiguity).toMatch(/Conflicting paid amounts/);
+    expect(r.status).toBe('NEEDS_REVIEW');
+  });
+  it('withholds in reversed paid order: Invoice Total 1000, Total Paid 0, Amount Paid 400, Balance Due 600', () => {
+    const r = extractInvoiceFieldsFromText(targetedInvoice('Invoice Total: $1,000.00\nTotal Paid: $0.00\nAmount Paid: $400.00\nBalance Due: $600.00\n'), 1);
+    expect(r.fields.amount).toBeUndefined();
+    expect(r.fields.amountAmbiguity).toMatch(/Conflicting paid amounts/);
+    expect(r.status).toBe('NEEDS_REVIEW');
+  });
+});

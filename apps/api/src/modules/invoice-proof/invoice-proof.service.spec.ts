@@ -38,6 +38,7 @@ vi.mock('./invoice-proof-scan.runner.js', () => ({
 
 import { InvoiceProofIntelligenceService } from './invoice-proof-intelligence.service.js';
 import { InvoiceProofService } from './invoice-proof.service.js';
+import { applyOcrExtraction } from '@chain-verify/proof-core/invoice-pdf-extract.js';
 
 // ---------------------------------------------------------------------------
 // PART 1 — Consortium cross-tenant fraud intel is a deliberate standalone no-op.
@@ -853,5 +854,36 @@ describe('InvoiceProofService.scan — OrgInvoiceHistory write respects skipHist
     // only the history write is skipped.
     expect(result.scanId).toBe('scan-run-1');
     expect(result).toHaveProperty('findings');
+  });
+});
+
+describe('InvoiceProofService — ambiguous final totals stop the provisional scan (two-totals fix)', () => {
+  it('returns scan null and never runs the fraud engine for ambiguous OCR totals with bank fields', async () => {
+    const extraction = applyOcrExtraction(
+      'INVOICE\n\nVendor: SYNTHETIC TEST VENDOR LLC\nInvoice Number: INV-SYNTH-2026-001\nDate: October 27, 2026\n\nAmount Due: $1,234.56\n\nTotal: $9,999.99\nRouting #: 021000021\nAccount #: ****6789\n',
+      1,
+      94,
+    );
+    expect(extraction.fields.amount).toBeUndefined();
+    expect(extraction.fields.amountAmbiguity).toMatch(/Conflicting final totals/);
+    expect(extraction.fields.bankRouting).toBe('021000021');
+
+    const pdfMock = {
+      extract: vi.fn().mockResolvedValue({ ok: true, extraction }),
+    };
+    const service = new InvoiceProofService(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      pdfMock as never,
+    );
+    const scanSpy = vi.spyOn(service, 'scan');
+    const result = await service.scanPdf(Buffer.from('%PDF-fake'), null, '127.0.0.1');
+    expect(result.scan).toBeNull();
+    expect(result.status).toBe('NEEDS_REVIEW');
+    expect(result.message).toMatch(/Conflicting final totals/);
+    expect(scanSpy).not.toHaveBeenCalled();
+    expect(pdfMock.extract).toHaveBeenCalledTimes(1);
   });
 });

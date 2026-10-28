@@ -35,6 +35,14 @@ export type ExtractedInvoiceFields = {
   invoiceNo?: string;
   invoiceDate?: string;
   amount?: number;
+  /**
+   * Set ONLY when the document's final-total labels contradict each other
+   * with no reconciling relationship (see resolveFinalTotal): the
+   * authoritative amount is withheld and this carries the explicit reason.
+   * Names labels only -- never raw amounts or account numbers. The service
+   * gate uses this (not warnings text) to stop provisional scans.
+   */
+  amountAmbiguity?: string;
   paymentTerms?: string;
   po?: string;
   bankRouting?: string;
@@ -246,6 +254,172 @@ function extractAmount(text: string): number | undefined {
   return undefined;
 }
 
+// --- Final-total contradiction detection (two-totals fix) -------------------
+// Semantics (decided before implementing; full doc in the work record):
+// final-total labels are the tier-1 specific labels plus tier-2 generic
+// "total". Bare "amount" (tier 3) is a last-resort fallback, NOT a final
+// total. Reconciliation is role-bound (v1.2): gross - paid = due, in whole
+// cents, with every asserted gross, due, and paid value validated --
+// same-role contradictions and multiple distinct paid values withhold,
+// otherwise the amount is withheld with an explicit reason.
+// Ordinary subtotal + tax + total docs have a singleton candidate set
+// (subtotal/tax lines are not final-total labels), so they are untouched.
+type FinalTotalCandidate = { label: string; value: number };
+
+function cleanLabel(raw: string): string {
+  return raw.trim().replace(/[.,;:#\- ]+$/, '').trim();
+}
+
+// Final-total candidates only: an explicit $0.00 is a real candidate value
+// (a fully-paid balance), so it must not be dropped the way parseAmount
+// drops zero elsewhere. parseAmount and extractAmount are unchanged.
+function parseFinalTotalAmount(raw: string): number | undefined {
+  const n = Number(raw.replace(/[^0-9.]/g, ''));
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+// Generic tier-2 "Total" matches that fall inside a recognized specific
+// (tier-1) label span are suppressed (v1.3): "Total Due" and
+// "Total Amount Due" are due labels, so the generic "Total" inside them must
+// not also be collected as a gross candidate with the due value. The tier-1
+// alternatives are ordered longest-first so the full specific label wins
+// ("Total Amount Due", not the "Amount Due" inside it); the tier-1 scan
+// consumes the full label, so an inner shorter label is never a second
+// candidate. A standalone "Total" outside every specific span is unchanged.
+function collectFinalTotalCandidates(text: string): FinalTotalCandidate[] {
+  const specificRe =
+    /(?:total\s*amount\s*due|grand\s*total|invoice\s*total|amount\s*payable|balance\s*due|amount\s*due|total\s*due)\s*[:#-]?\s*/i;
+  const genericRe = /\btotal\b\s*[:#-]?\s*/i;
+  const isCandidate = (tok: string) => looksLikeCurrencyToken(tok);
+  const shouldSkip = (tok: string) =>
+    isHeaderNoiseWord(tok) ||
+    looksLikeDateToken(tok) ||
+    (looksLikeBareInteger(tok) && !looksLikeCurrencyToken(tok));
+  const found: FinalTotalCandidate[] = [];
+  const specificSpans: { start: number; end: number }[] = [];
+  const collectFrom = (labelRe: RegExp, isGeneric: boolean): void => {
+    const re = new RegExp(labelRe.source, 'gi');
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const matchStart = m.index;
+      const matchEnd = m.index + m[0].length;
+      if (isGeneric) {
+        const overlapsSpecific = specificSpans.some(
+          (span) => matchStart < span.end && matchEnd > span.start,
+        );
+        if (overlapsSpecific) {
+          if (m.index === re.lastIndex) re.lastIndex += 1;
+          continue;
+        }
+      } else {
+        specificSpans.push({ start: matchStart, end: matchEnd });
+      }
+      const tail = text.slice(matchEnd);
+      const tokens = tail.trim().split(/\s+/).slice(0, 14);
+      for (const raw of tokens) {
+        const tok = raw.replace(/[.,;:]+$/, '');
+        if (tok.length === 0) continue;
+        if (shouldSkip(tok)) continue;
+        if (isCandidate(tok)) {
+          const v = parseFinalTotalAmount(tok);
+          if (v !== undefined) found.push({ label: cleanLabel(m[0]), value: v });
+        }
+        break; // first non-skipped token only, mirroring extractAmount
+      }
+      if (m.index === re.lastIndex) re.lastIndex += 1;
+    }
+  };
+  collectFrom(specificRe, false);
+  collectFrom(genericRe, true);
+  return found;
+}
+
+// Every paid assertion in the text, in order. Callers must validate the whole
+// list: returning only the first paid value silently ignores later payment
+// assertions and makes the result depend on their order (v1.2).
+function collectPaidAmounts(text: string): number[] {
+  const re = /\b(?:amount\s*paid|total\s*paid|payments?\s*(?:received|made)?|paid)\b\s*[:#-]?/gi;
+  const shouldSkip = (tok: string) =>
+    isHeaderNoiseWord(tok) ||
+    looksLikeDateToken(tok) ||
+    (looksLikeBareInteger(tok) && !looksLikeCurrencyToken(tok));
+  const found: number[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const tail = text.slice(m.index + m[0].length);
+    const tokens = tail.trim().split(/\s+/).slice(0, 14);
+    for (const raw of tokens) {
+      const tok = raw.replace(/[.,;:]+$/, '');
+      if (tok.length === 0) continue;
+      if (shouldSkip(tok)) continue;
+      if (looksLikeCurrencyToken(tok)) {
+        const v = parseFinalTotalAmount(tok);
+        if (v !== undefined) found.push(v);
+      }
+      break; // first non-skipped token only; a miss here fails closed
+    }
+    if (m.index === re.lastIndex) re.lastIndex += 1;
+  }
+  return found;
+}
+
+function resolveFinalTotal(text: string): { amount?: number; ambiguity?: string } {
+  const candidates = collectFinalTotalCandidates(text);
+  if (candidates.length === 0) return { amount: extractAmount(text) };
+  const labels = [...new Set(candidates.map((c) => c.label))];
+  const conflict = {
+    ambiguity: `Conflicting final totals (${labels.join(' vs ')}) with no reconciling relationship -- authoritative amount withheld.`,
+  };
+  // Label roles (v1.2): a due/payable label states what is still owed; every
+  // other final-total label states the gross total. Roles are never swapped
+  // to make an arithmetic pair fit, and every asserted value is validated.
+  const isDueLabel = (label: string): boolean => /due|payable/i.test(label);
+  const grossCents = [
+    ...new Set(
+      candidates
+        .filter((c) => !isDueLabel(c.label))
+        .map((c) => Math.round(c.value * 100)),
+    ),
+  ];
+  const dueCents = [
+    ...new Set(
+      candidates
+        .filter((c) => isDueLabel(c.label))
+        .map((c) => Math.round(c.value * 100)),
+    ),
+  ];
+  // Same-role contradictions abstain before any reconciliation.
+  if (grossCents.length > 1 || dueCents.length > 1) return conflict;
+  // Multiple distinct paid assertions abstain: no sum is invented and no
+  // payment assertion is ignored, in either order.
+  const paidCents = [
+    ...new Set(collectPaidAmounts(text).map((v) => Math.round(v * 100))),
+  ];
+  if (paidCents.length > 1) {
+    return {
+      ambiguity:
+        'Conflicting paid amounts with no aggregate semantics -- authoritative amount withheld.',
+    };
+  }
+  const paid = paidCents.length === 1 ? paidCents[0] : undefined;
+  if (grossCents.length === 1 && dueCents.length === 1) {
+    const gross = grossCents[0];
+    const due = dueCents[0];
+    if (gross === undefined || due === undefined) return conflict;
+    if (paid !== undefined) {
+      if (gross - paid === due) return { amount: Number((due / 100).toFixed(2)) };
+      return conflict;
+    }
+    if (gross === due) return { amount: Number((gross / 100).toFixed(2)) };
+    return conflict;
+  }
+  // Single-role documents claim the single asserted value, as before: no
+  // due is invented from gross minus paid, and no gross from a due alone.
+  const single = grossCents.length === 1 ? grossCents[0] : dueCents[0];
+  if (single === undefined) return conflict;
+  return { amount: Number((single / 100).toFixed(2)) };
+}
+
 function extractBankRouting(text: string): string | undefined {
   const m =
     /(?:routing|aba|rtn)\s*(?:#|no\.?|number)?\s*[:-]?\s*([0-9]{9})\b/i.exec(text);
@@ -366,11 +540,17 @@ export function extractInvoiceFieldsFromText(
     warnings.push('Vendor inferred from document letterhead — verify before approving.');
   }
 
+  const totalResolution = resolveFinalTotal(text);
+  if (totalResolution.ambiguity) {
+    warnings.push(totalResolution.ambiguity);
+  }
+
   const fields: ExtractedInvoiceFields = {
     vendor: vendorResult.vendor,
     invoiceNo: extractInvoiceNo(text),
     invoiceDate: extractDate(text),
-    amount: extractAmount(text),
+    amount: totalResolution.amount,
+    ...(totalResolution.ambiguity ? { amountAmbiguity: totalResolution.ambiguity } : {}),
     paymentTerms: extractTerms(text),
     po: extractPo(text),
     bankRouting: extractBankRouting(text),
