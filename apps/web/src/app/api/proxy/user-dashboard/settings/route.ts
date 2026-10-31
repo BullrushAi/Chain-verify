@@ -1,6 +1,8 @@
 ﻿import { NextRequest, NextResponse } from 'next/server';
 
-const API_BASE = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+import { dashboardUrl } from '@/lib/dashboardUrl';
+
+const API_BASE = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_URL || '';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -9,7 +11,7 @@ export async function GET(request: NextRequest) {
   const apiKeyHeader = request.headers.get('x-chain-verify-api-key') || request.headers.get('authorization') || '';
   const apiKey = apiKeyHeader.replace('Bearer ', '');
   try {
-    const res = await fetch(API_BASE + '/user-dashboard/settings', {
+    const res = await fetch(dashboardUrl(API_BASE, 'settings'), {
       headers: apiKey ? { Authorization: 'Bearer ' + apiKey } : {},
       cache: 'no-store',
     });

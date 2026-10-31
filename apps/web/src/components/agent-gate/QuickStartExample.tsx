@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { CopyButton } from './CopyButton';
 
 export interface QuickStartExampleProps {
-  /** API base URL, e.g. https://chain-verify-api.onrender.com (no trailing slash needed). */
+  /** API base URL, e.g. https://chain-verify-api-63eg.onrender.com (no trailing slash needed). */
   endpoint: string;
 }
 

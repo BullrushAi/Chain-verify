@@ -969,7 +969,7 @@ export default function InvoiceProofClient() {
                   tabSize: 2,
                 }}
               >
-                <code>{`curl -X POST https://chain-verify-api.onrender.com/api/verify \\
+                <code>{`curl -X POST https://chain-verify-api-63eg.onrender.com/api/verify \\
   -H "Authorization: Bearer <API_KEY>" \\
   -H "Content-Type: application/json" \\
   -d '{

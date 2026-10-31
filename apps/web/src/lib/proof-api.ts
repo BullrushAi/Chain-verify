@@ -1,5 +1,7 @@
+import { CANONICAL_API_ORIGIN, resolveConfiguredApiBase } from './dashboardUrl';
+
 const DEFAULT_DEVELOPMENT_API_BASE = 'http://localhost:3001';
-const DEFAULT_PRODUCTION_API_BASE = 'https://chain-verify-api.onrender.com';
+const DEFAULT_PRODUCTION_API_BASE = CANONICAL_API_ORIGIN;
 const APP_HOSTS = new Set(['chainverify.org', 'www.chainverify.org']);
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
 
@@ -23,7 +25,7 @@ function alignLocalApiHostWithBrowser(configured: string): string {
 }
 
 export function resolveProofApiBase(): string {
-  const configured = process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/$/, '');
+  const configured = resolveConfiguredApiBase(process.env.NEXT_PUBLIC_API_URL);
   if (!configured) {
     return process.env.NODE_ENV === 'development'
       ? alignLocalApiHostWithBrowser(DEFAULT_DEVELOPMENT_API_BASE)

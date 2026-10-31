@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const API_BASE = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+import { dashboardUrl } from '@/lib/dashboardUrl';
+
+const API_BASE = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_URL || '';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,7 +12,7 @@ export async function GET(request: NextRequest) {
   const apiKey = apiKeyHeader.replace('Bearer ', '');
   const search = request.nextUrl.searchParams.toString();
   try {
-    const res = await fetch(API_BASE + '/user-dashboard/scans' + (search ? '?' + search : ''), {
+    const res = await fetch(dashboardUrl(API_BASE, 'scans', search), {
       headers: apiKey ? { Authorization: 'Bearer ' + apiKey } : {},
       cache: 'no-store',
     });
