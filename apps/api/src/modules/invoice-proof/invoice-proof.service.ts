@@ -61,9 +61,9 @@ import {
 const FREE_SCAN_PRODUCT = 'invoice-proof';
 /** One message for every rejected vendor-portal code: no oracle on which factor failed. */
 const INVOICE_PROOF_INVALID_OTP_MESSAGE = 'Invalid or expired verification code.';
-const UPGRADE_URL = process.env.INVOICEPROOF_UPGRADE_URL ?? 'https://chain-verify-api.onrender.com';
+const UPGRADE_URL = process.env.INVOICEPROOF_UPGRADE_URL ?? 'https://chain-verify-api-63eg.onrender.com';
 const REGISTER_URL =
-  process.env.CHAIN_VERIFY_REGISTER_URL ?? 'https://chain-verify-api.onrender.com';
+  process.env.CHAIN_VERIFY_REGISTER_URL ?? 'https://chain-verify-api-63eg.onrender.com';
 
 // Sentinel org used for un-authenticated scans, matching the convention
 // already used by VerifyAPI's anonymous/demo runs (see ANONYMOUS_ORG_ID in
