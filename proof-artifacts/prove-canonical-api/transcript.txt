@@ -1,0 +1,113 @@
+# Canonical API transcript — Chain Verify
+
+Checked at: 2026-10-31T15:06:10Z through 2026-10-31T15:06:13Z
+Host: https://chain-verify-api-63eg.onrender.com
+Service: srv-dbfpdd6i0phs73eev8l0 (from proof-artifacts/record-render-canon/render-reconciliation.md)
+Method: curl.exe, HTTP/1.1, --max-redirs 0, --max-time 120, no -L.
+Headers sent: Accept: application/json, Content-Type: application/json. No Authorization header. No API key.
+Redirects followed: 0 on every call. Each call sent once. The labeled demo was not retried.
+
+Stale hosts were not called.
+
+## 1. GET /api/user-dashboard/overview
+
+Request URL: https://chain-verify-api-63eg.onrender.com/api/user-dashboard/overview
+Request body: (none)
+Status: 401
+Final URL: https://chain-verify-api-63eg.onrender.com/api/user-dashboard/overview
+num_redirects: 0
+Date: Sat, 31 Oct 2026 15:06:10 GMT
+Content-Type: application/json; charset=utf-8
+Body (89 chars, under 500):
+{"message":"Valid Chain Verify API key required","error":"Unauthorized","statusCode":401}
+
+## 2. POST /api/verify
+
+Request URL: https://chain-verify-api-63eg.onrender.com/api/verify
+Request body: {}
+Status: 401
+Final URL: https://chain-verify-api-63eg.onrender.com/api/verify
+num_redirects: 0
+Date: Sat, 31 Oct 2026 15:06:11 GMT
+Content-Type: application/json; charset=utf-8
+Body (89 chars, under 500):
+{"message":"Valid Chain Verify API key required","error":"Unauthorized","statusCode":401}
+
+## 3. POST /api/verify/demo
+
+Request URL: https://chain-verify-api-63eg.onrender.com/api/verify/demo
+Request body: {}
+Status: 400
+Final URL: https://chain-verify-api-63eg.onrender.com/api/verify/demo
+num_redirects: 0
+Date: Sat, 31 Oct 2026 15:06:11 GMT
+Content-Type: application/json; charset=utf-8
+Body (83 chars, under 500):
+{"message":"Missing required field: output","error":"Bad Request","statusCode":400}
+
+## 4. POST /api/proof/audit-intake
+
+Request URL: https://chain-verify-api-63eg.onrender.com/api/proof/audit-intake
+Request body: {}
+Status: 400
+Final URL: https://chain-verify-api-63eg.onrender.com/api/proof/audit-intake
+num_redirects: 0
+Date: Sat, 31 Oct 2026 15:06:11 GMT
+Content-Type: application/json; charset=utf-8
+Body (76 chars, under 500):
+{"message":"companyName is required","error":"Bad Request","statusCode":400}
+
+## 5. POST /api/invoice-proof/scan
+
+Request URL: https://chain-verify-api-63eg.onrender.com/api/invoice-proof/scan
+Request body: {}
+Status: 403
+Final URL: https://chain-verify-api-63eg.onrender.com/api/invoice-proof/scan
+num_redirects: 0
+Date: Sat, 31 Oct 2026 15:06:12 GMT
+Content-Type: application/json; charset=utf-8
+Body (130 chars, under 500):
+{"message":"Free scan already used from this network. Register to continue.","upgradeUrl":"https://chain-verify-api.onrender.com"}
+
+## 6. POST /api/verify/demo (labeled output, one write)
+
+Request URL: https://chain-verify-api-63eg.onrender.com/api/verify/demo
+Request body: {"source_type":"api_output","task":"o2o-probe","output":"chain-verify o2o probe 2026-10-31"}
+Status: 503
+Final URL: https://chain-verify-api-63eg.onrender.com/api/verify/demo
+num_redirects: 0
+Date: Sat, 31 Oct 2026 15:06:13 GMT
+Content-Type: application/json; charset=utf-8
+Body (154 chars, under 500):
+{"status":"needs_review","risk":"unknown","confidence":0,"message":"Verification temporarily unavailable. Please retry or contact support.","findings":[]}
+
+No id field. Not 200 or 201. Not retried: packet forbids a second demo with output after 429 or 5xx.
+
+## Criterion check
+
+- GET /api/user-dashboard/overview is 401 and body contains "Valid Chain Verify API key required": YES
+- POST /api/verify {} is 401: YES
+- POST /api/verify/demo {} is 400: YES
+- POST /api/proof/audit-intake {} is 400: YES
+- POST /api/invoice-proof/scan {} is 200 or 400 or 403, and is not 404: YES (403)
+- POST /api/verify/demo with the labeled output is 200 or 201 and the body contains an id: NO (503, no id)
+
+## 7. POST /api/verify/demo (labeled output, one allowed retry)
+
+Checked at: 2026-10-31T15:10:57Z through 2026-10-31T15:11:10Z (local). Response Date header: Sat, 31 Oct 2026 15:11:13 GMT.
+Host: https://chain-verify-api-63eg.onrender.com
+Method: curl.exe, HTTP/1.1, --max-redirs 0, --max-time 120, no -L.
+Headers sent: Accept: application/json, Content-Type: application/json. No Authorization header. No API key.
+Redirects followed: 0. This is the single allowed retry of section 6. No further request was sent.
+
+Request URL: https://chain-verify-api-63eg.onrender.com/api/verify/demo
+Request body: {"source_type":"api_output","task":"o2o-probe","output":"chain-verify o2o probe 2026-10-31"}
+Status: 503
+Final URL: https://chain-verify-api-63eg.onrender.com/api/verify/demo
+num_redirects: 0
+Date: Sat, 31 Oct 2026 15:11:13 GMT
+Content-Type: application/json; charset=utf-8
+Body (154 chars, under 800):
+{"status":"needs_review","risk":"unknown","confidence":0,"message":"Verification temporarily unavailable. Please retry or contact support.","findings":[]}
+
+No id field. Not 200 or 201. Not retried again.
