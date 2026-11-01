@@ -1,6 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Test } from '@nestjs/testing';
+import axios from 'axios';
 import { SecurityChecksService } from './security-checks.service.js';
+
+vi.mock('axios');
+const mockedAxios = vi.mocked(axios);
 
 describe('SecurityChecksService', () => {
   let service: SecurityChecksService;
@@ -96,6 +100,25 @@ describe('SecurityChecksService', () => {
   });
 
   describe('checkDependencySecurity (S6)', () => {
+    // Deterministic unit tests: axios is mocked at module level (see vi.mock
+    // at the top of this file), so no test in this describe block touches
+    // the network. The genuine live calls are preserved verbatim,
+    // explicitly separate, in
+    // apps/api/scripts/security-checks-live-integration.manual.ts (outside
+    // src/, not a *.spec.ts, so `vitest run` does not execute it).
+    //
+    // DEFECT FIX (separate from the v1.4 parser repair): the baseline
+    // service swallowed a GitHub compare failure in extractNewPackages and
+    // returned [], which S6 then reported as PASS / "no new packages".
+    // That characterisation was the defect, not behaviour to preserve.
+    // After the fix, an unavailable compare (fetch failure, timeout, or
+    // malformed response) returns WARNING with incomplete-check evidence,
+    // while a successfully inspected empty set still returns PASS.
+    beforeEach(() => {
+      mockedAxios.get.mockReset();
+      mockedAxios.post.mockReset();
+    });
+
     it('returns PASS when no package.json change', async () => {
       const result = await service.checkDependencySecurity(
         ['src/foo.ts', 'src/bar.ts'],
@@ -116,8 +139,22 @@ describe('SecurityChecksService', () => {
     });
 
     it('detects package.json at root path', async () => {
-      // When package.json IS changed it tries to fetch from GitHub — we just verify it proceeds past the early exit
-      // (It will return WARNING if the GitHub call fails with no token, which is expected in test env)
+      // Mocked GitHub compare returns one new package; mocked OSV returns
+      // no vulnerabilities. Original assertions preserved: checkId S6 and
+      // status in [PASS, WARNING] (the mocked success path returns PASS).
+      mockedAxios.get.mockResolvedValue({
+        data: {
+          files: [
+            {
+              filename: 'package.json',
+              patch: '+  "newpkg": "1.2.3",\n',
+            },
+          ],
+        },
+      } as any);
+      mockedAxios.post.mockResolvedValue({
+        data: { results: [{ vulns: [] }] },
+      } as any);
       const result = await service.checkDependencySecurity(
         ['package.json'],
         'nonexistent-owner', 'nonexistent-repo', 'abc', 'def',
@@ -125,15 +162,233 @@ describe('SecurityChecksService', () => {
       expect(result.checkId).toBe('S6');
       // May return PASS (no new packages extracted) or WARNING (OSV unreachable); never FAIL here
       expect(['PASS', 'WARNING']).toContain(result.status);
+      expect(result.status).toBe('PASS');
+      expect((result.evidence as any).newPackagesChecked).toBe(1);
     });
 
     it('detects nested package.json via endsWith check', async () => {
+      mockedAxios.get.mockResolvedValue({
+        data: {
+          files: [
+            {
+              filename: 'apps/web/package.json',
+              patch: '+  "nestedpkg": "2.0.0",\n',
+            },
+          ],
+        },
+      } as any);
+      mockedAxios.post.mockResolvedValue({
+        data: { results: [{ vulns: [] }] },
+      } as any);
       const result = await service.checkDependencySecurity(
         ['apps/web/package.json'],
         'nonexistent-owner', 'nonexistent-repo', 'abc', 'def',
       );
       expect(result.checkId).toBe('S6');
       expect(['PASS', 'WARNING']).toContain(result.status);
+      expect((result.evidence as any).newPackagesChecked).toBe(1);
+    });
+
+    it('returns FAIL when OSV reports a HIGH advisory for a new package', async () => {
+      mockedAxios.get.mockResolvedValue({
+        data: {
+          files: [
+            {
+              filename: 'package.json',
+              patch: '+  "vulnpkg": "1.0.0",\n',
+            },
+          ],
+        },
+      } as any);
+      mockedAxios.post.mockResolvedValue({
+        data: {
+          results: [
+            {
+              vulns: [
+                {
+                  id: 'GHSA-xxxx-yyyy-zzzz',
+                  database_specific: { severity: 'HIGH' },
+                },
+              ],
+            },
+          ],
+        },
+      } as any);
+      const result = await service.checkDependencySecurity(
+        ['package.json'],
+        'nonexistent-owner', 'nonexistent-repo', 'abc', 'def',
+      );
+      expect(result.checkId).toBe('S6');
+      expect(result.status).toBe('FAIL');
+      expect(result.detail).toContain('vulnpkg');
+      expect(result.detail).toContain('GHSA-xxxx-yyyy-zzzz');
+    });
+
+    it('returns WARNING when the OSV query times out', async () => {
+      mockedAxios.get.mockResolvedValue({
+        data: {
+          files: [
+            {
+              filename: 'package.json',
+              patch: '+  "timeoutpkg": "3.0.0",\n',
+            },
+          ],
+        },
+      } as any);
+      mockedAxios.post.mockRejectedValue(new Error('timeout of 10000ms exceeded'));
+      const result = await service.checkDependencySecurity(
+        ['package.json'],
+        'nonexistent-owner', 'nonexistent-repo', 'abc', 'def',
+      );
+      expect(result.checkId).toBe('S6');
+      expect(result.status).toBe('WARNING');
+      expect(result.detail).toContain('OSV');
+    });
+
+    it('returns WARNING with incomplete-check evidence when the GitHub compare fails', async () => {
+      // REPLACED expectation (defect fix): the baseline returned PASS /
+      // "no new packages" here because extractNewPackages swallowed the
+      // failure and returned []. A failed compare means the check did not
+      // run to completion, so it must be WARNING with incomplete evidence
+      // — never PASS, and never "no new packages".
+      mockedAxios.get.mockRejectedValue(new Error('Request failed with status code 404'));
+      const result = await service.checkDependencySecurity(
+        ['package.json'],
+        'nonexistent-owner', 'nonexistent-repo', 'abc', 'def',
+      );
+      expect(result.checkId).toBe('S6');
+      expect(result.status).toBe('WARNING');
+      expect(result.detail).toContain('incomplete');
+      expect(result.detail).toContain('compare');
+      expect(result.detail).not.toContain('no new packages');
+      expect((result.evidence as any).checkIncomplete).toBe(true);
+      expect((result.evidence as any).compareAvailable).toBe(false);
+      // Not established — deliberately null, never 0 ("0 inspected").
+      expect((result.evidence as any).newPackagesChecked).toBeNull();
+      expect(mockedAxios.post).not.toHaveBeenCalled();
+    });
+
+    it('returns WARNING with incomplete-check evidence when the GitHub compare times out', async () => {
+      mockedAxios.get.mockRejectedValue(new Error('timeout of 10000ms exceeded'));
+      const result = await service.checkDependencySecurity(
+        ['package.json'],
+        'nonexistent-owner', 'nonexistent-repo', 'abc', 'def',
+      );
+      expect(result.checkId).toBe('S6');
+      expect(result.status).toBe('WARNING');
+      expect(result.detail).toContain('incomplete');
+      expect((result.evidence as any).checkIncomplete).toBe(true);
+      expect((result.evidence as any).compareAvailable).toBe(false);
+      expect((result.evidence as any).newPackagesChecked).toBeNull();
+      expect(mockedAxios.post).not.toHaveBeenCalled();
+    });
+
+    it('returns WARNING with incomplete-check evidence when the GitHub compare response is malformed', async () => {
+      mockedAxios.get.mockResolvedValue({
+        data: { files: 'not-an-array' },
+      } as any);
+      const result = await service.checkDependencySecurity(
+        ['package.json'],
+        'nonexistent-owner', 'nonexistent-repo', 'abc', 'def',
+      );
+      expect(result.checkId).toBe('S6');
+      expect(result.status).toBe('WARNING');
+      expect(result.detail).toContain('incomplete');
+      expect((result.evidence as any).checkIncomplete).toBe(true);
+      expect((result.evidence as any).compareAvailable).toBe(false);
+      expect((result.evidence as any).newPackagesChecked).toBeNull();
+      expect(mockedAxios.post).not.toHaveBeenCalled();
+    });
+
+    // S6 RETURN correction: malformed files entries and malformed
+    // package patches must be WARNING with incomplete evidence, never
+    // PASS and never a thrown TypeError. Parameterized so each shape is
+    // asserted separately: WARNING, incomplete evidence, and no OSV call.
+    it.each([
+      ['null entry', [null]],
+      ['empty-object entry', [{}]],
+      ['number entry', [42]],
+      ['non-string filename', [{ filename: 42 }]],
+      ['empty filename', [{ filename: '' }]],
+      ['malformed entry alongside a valid entry', [{ filename: 'package.json', patch: '+  "okpkg": "1.0.0",\n' }, null]],
+    ])('returns WARNING for malformed files entry: %s', async (_label, files) => {
+      mockedAxios.get.mockResolvedValue({ data: { files } } as any);
+      const result = await service.checkDependencySecurity(
+        ['package.json'],
+        'nonexistent-owner', 'nonexistent-repo', 'abc', 'def',
+      );
+      expect(result.checkId).toBe('S6');
+      expect(result.status).toBe('WARNING');
+      expect(result.detail).toContain('incomplete');
+      expect(result.detail).not.toContain('no new packages');
+      expect((result.evidence as any).checkIncomplete).toBe(true);
+      expect((result.evidence as any).compareAvailable).toBe(false);
+      expect((result.evidence as any).newPackagesChecked).toBeNull();
+      expect(mockedAxios.post).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['number patch', 42],
+      ['object patch', {}],
+      ['array patch', []],
+      ['empty-string patch', ''],
+      ['missing patch', undefined],
+    ])('returns WARNING for malformed package patch: %s', async (_label, patch) => {
+      mockedAxios.get.mockResolvedValue({
+        data: { files: [{ filename: 'package.json', patch }] },
+      } as any);
+      const result = await service.checkDependencySecurity(
+        ['package.json'],
+        'nonexistent-owner', 'nonexistent-repo', 'abc', 'def',
+      );
+      expect(result.checkId).toBe('S6');
+      expect(result.status).toBe('WARNING');
+      expect(result.detail).toContain('incomplete');
+      expect(result.detail).not.toContain('no new packages');
+      expect((result.evidence as any).checkIncomplete).toBe(true);
+      expect((result.evidence as any).compareAvailable).toBe(false);
+      expect((result.evidence as any).newPackagesChecked).toBeNull();
+      expect(mockedAxios.post).not.toHaveBeenCalled();
+    });
+
+    it('returns PASS for a genuinely inspected empty compare (no package.json file)', async () => {
+      // Contrast with the WARNING cases above: the compare WAS fetched
+      // and parsed, and it contains no package.json file — a successfully
+      // inspected empty set, so PASS is correct here.
+      mockedAxios.get.mockResolvedValue({
+        data: { files: [] },
+      } as any);
+      const result = await service.checkDependencySecurity(
+        ['package.json'],
+        'nonexistent-owner', 'nonexistent-repo', 'abc', 'def',
+      );
+      expect(result.checkId).toBe('S6');
+      expect(result.status).toBe('PASS');
+      expect(result.detail).toContain('no new packages');
+      expect(mockedAxios.post).not.toHaveBeenCalled();
+    });
+
+    it('returns PASS for a genuinely inspected compare with only metadata changes', async () => {
+      // The patch was inspected; its only added line is a metadata key,
+      // which is not a dependency — so the inspected set is empty.
+      mockedAxios.get.mockResolvedValue({
+        data: {
+          files: [
+            {
+              filename: 'package.json',
+              patch: '+  "description": "new description",\n',
+            },
+          ],
+        },
+      } as any);
+      const result = await service.checkDependencySecurity(
+        ['package.json'],
+        'nonexistent-owner', 'nonexistent-repo', 'abc', 'def',
+      );
+      expect(result.checkId).toBe('S6');
+      expect(result.status).toBe('PASS');
+      expect(result.detail).toContain('no new packages');
+      expect(mockedAxios.post).not.toHaveBeenCalled();
     });
   });
 

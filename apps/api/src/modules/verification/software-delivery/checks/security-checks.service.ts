@@ -39,6 +39,16 @@ interface DiffHunk {
   added: string[];
 }
 
+// Result of a GitHub compare inspection. `available: false` means the
+// compare could not be fetched or parsed — it is NOT an empty package set.
+// Only `available: true` with an empty `packages` array means the compare
+// was successfully inspected and contained no new packages. This
+// distinction is what keeps a failed compare from being reported as
+// PASS / "no new packages".
+type NewPackagesResult =
+  | { available: true; packages: Array<{ name: string; version: string }> }
+  | { available: false };
+
 // Splits a unified diff into per-file, per-hunk removed/added line groups.
 // Pure text parsing — never executes anything from the diff content.
 function splitDiffIntoHunks(diffText: string): DiffHunk[] {
@@ -292,8 +302,30 @@ export class SecurityChecksService {
       };
     }
 
-    // Parse new packages from the diff (look for + lines in package.json diff)
-    const newPackages = await this.extractNewPackages(owner, repo, before, after);
+    // Parse new packages from the diff (look for + lines in package.json diff).
+    // An unavailable compare is NOT an empty set: extractNewPackages
+    // distinguishes the two, and an unavailable compare is reported as an
+    // incomplete WARNING below — never as PASS / "no new packages".
+    const extracted = await this.extractNewPackages(owner, repo, before, after);
+
+    if (!extracted.available) {
+      return {
+        checkId: 'S6',
+        checkName: CHECK_NAMES['S6'],
+        tier: 'STANDARD',
+        status: 'WARNING',
+        detail:
+          'GitHub compare unavailable — dependency check incomplete: new packages could not be inspected. Manual dependency review recommended.',
+        evidence: {
+          checkIncomplete: true,
+          compareAvailable: false,
+          newPackagesChecked: null,
+        },
+        durationMs: Date.now() - start,
+      };
+    }
+
+    const newPackages = extracted.packages;
 
     if (newPackages.length === 0) {
       return {
@@ -425,10 +457,11 @@ export class SecurityChecksService {
     repo: string,
     before: string,
     after: string,
-  ): Promise<Array<{ name: string; version: string }>> {
+  ): Promise<NewPackagesResult> {
+    let response: { data?: { files?: unknown } };
     try {
       const token = process.env.GITHUB_TOKEN ?? '';
-      const response = await axios.get(
+      response = await axios.get(
         `https://api.github.com/repos/${owner}/${repo}/compare/${before}...${after}`,
         {
           headers: {
@@ -438,10 +471,49 @@ export class SecurityChecksService {
           timeout: 10000,
         },
       );
-      const pkgFile = (response.data.files ?? []).find(
-        (f: { filename: string }) => f.filename === 'package.json' || f.filename.endsWith('/package.json'),
-      );
-      if (!pkgFile?.patch) return [];
+    } catch {
+      // Fetch failure (network error, timeout, non-2xx): the compare is
+      // unavailable. Callers must NOT read this as "no new packages".
+      return { available: false };
+    }
+    const files = response?.data?.files;
+    if (!Array.isArray(files)) {
+      // Malformed compare response: nothing was successfully inspected.
+      return { available: false };
+    }
+    // S6 RETURN correction: every files entry must be a non-null object
+    // with a nonempty string filename. A malformed entry anywhere in the
+    // compare makes the whole inspection unavailable — it must never be
+    // skipped over and read as an inspected-empty set (PASS).
+    const malformedEntry = files.some(
+      (f: unknown) =>
+        f === null ||
+        typeof f !== 'object' ||
+        typeof (f as { filename?: unknown }).filename !== 'string' ||
+        ((f as { filename: string }).filename.length === 0),
+    );
+    if (malformedEntry) {
+      return { available: false };
+    }
+    try {
+      const pkgFile = files.find(
+        (f: { filename: string }) =>
+          f.filename === 'package.json' || f.filename.endsWith('/package.json'),
+      ) as { filename: string; patch?: unknown } | undefined;
+      if (!pkgFile) {
+        // The compare was fetched and parsed and contains no package.json
+        // file at all: that is a successfully inspected empty set for
+        // package.json, not an unavailable compare.
+        return { available: true, packages: [] };
+      }
+      if (typeof pkgFile.patch !== 'string' || pkgFile.patch.length === 0) {
+        // The compare contains a package.json entry but no nonempty
+        // string patch text to inspect: the inspection of that file did
+        // not happen, so the result is unavailable, not an inspected-empty
+        // set. Non-string patches (42, {}, []) are malformed here, not
+        // empty — parsing them would throw outside any error boundary.
+        return { available: false };
+      }
 
       const addedLines = pkgFile.patch
         .split('\n')
@@ -455,9 +527,12 @@ export class SecurityChecksService {
         if (!this.isValidNpmPackageQuery(name, rawVersion)) continue;
         packages.push({ name, version: rawVersion.replace(/^[\^~>=<]*/, '') });
       }
-      return packages;
+      return { available: true, packages };
     } catch {
-      return [];
+      // Any parsing failure after a successful fetch is still an
+      // unavailable compare, never an inspected-empty set and never a
+      // thrown error escaping into the caller.
+      return { available: false };
     }
   }
 }
