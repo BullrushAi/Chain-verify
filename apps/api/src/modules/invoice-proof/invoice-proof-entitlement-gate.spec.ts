@@ -199,7 +199,7 @@ describe('InvoiceProofService.checkScanGate — entitlement gate (Part 4)', () =
   // Case 3: authed user with NO organizationId → still free-scan-gated, and
   // the entitlement table is never even queried (there's nothing to resolve).
   // -------------------------------------------------------------------------
-  it('authed user with no organizationId → first scan allowed, second gets 402, entitlement never queried', async () => {
+  it('authed user with no organizationId → first scan allowed, second gets 402, entitlement looked up by identity id', async () => {
     const freeScanStore: Array<{ userId: string }> = [];
     const freeScanFindFirst = vi.fn().mockImplementation(async (args: { where: { userId: string } }) => {
       return freeScanStore.find((r) => r.userId === args.where.userId) ?? null;
@@ -221,7 +221,10 @@ describe('InvoiceProofService.checkScanGate — entitlement gate (Part 4)', () =
     if (first.allowed) {
       expect(first.recordFreeScan).toBe(true);
     }
-    expect(entitlementFindFirst).not.toHaveBeenCalled();
+    // Regression (402 on paid API keys): the identity id is the entitlement key fallback.
+    expect(entitlementFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ organizationId: 'user-c' }) }),
+    );
 
     await service.recordFreeScan(user, '6.6.6.6');
 
@@ -230,6 +233,35 @@ describe('InvoiceProofService.checkScanGate — entitlement gate (Part 4)', () =
     if (!second.allowed) {
       expect(second.status).toBe(402);
     }
+  });
+
+  it('API-key identity with organizationId=null and an entitlement keyed by its id  allowed, no free scan (402 regression)', async () => {
+    const freeScanFindFirst = vi.fn().mockResolvedValue({ id: 'used-before' });
+    const { service } = makeService({
+      proofProductEntitlement: {
+        findFirst: vi.fn().mockImplementation(async (args: { where: { organizationId: string } }) =>
+          args.where.organizationId === 'apiid-1' ? { id: 'ent-2', status: 'ACTIVE' } : null,
+        ),
+      },
+      proofFreeScan: { findFirst: freeScanFindFirst, create: vi.fn() },
+    });
+    const user = { id: 'apiid-1', email: '', organizationId: null } as never;
+    const result = await service.checkScanGate(user, '7.7.7.7');
+    expect(result.allowed).toBe(true);
+    if (result.allowed) {
+      expect(result.recordFreeScan).toBe(false);
+      expect(result.organizationId).toBe('apiid-1');
+    }
+    expect(freeScanFindFirst).not.toHaveBeenCalled();
+  });
+
+  it('PAST_DUE entitlement within grace is still honored (same window as billing adapter)', async () => {
+    const entitlementFindFirst = vi.fn().mockResolvedValue({ id: 'ent-3', status: 'PAST_DUE' });
+    const { service } = makeService({ proofProductEntitlement: { findFirst: entitlementFindFirst } });
+    const result = await service.checkScanGate(makeUser('u', 'org-pd'), '8.8.8.8');
+    expect(result.allowed).toBe(true);
+    const where = entitlementFindFirst.mock.calls[0][0].where;
+    expect(JSON.stringify(where.OR)).toContain('PAST_DUE');
   });
 
   // -------------------------------------------------------------------------

@@ -185,14 +185,24 @@ export class InvoiceProofService {
     if (user) {
       // Resolve the effective org, following membership even when the JWT omits
       // organizationId (which is always the case with the current JWT strategy).
-      const resolvedOrgId = await this.resolveEntitledOrgId(user);
+      // API-key identities (ApiKeyIdentityAdapter) may carry organizationId=null;
+      // entitlements provisioned for the identity itself are keyed by its id, the same
+      // fallback VerifyApiController.resolveOrgForUser uses. Without it every paying
+      // API-key caller hit the one-free-scan gate and got 402.
+      const resolvedOrgId = (await this.resolveEntitledOrgId(user)) ?? user.id;
 
       if (resolvedOrgId) {
         const entitlement = await this.prisma.proofProductEntitlement.findFirst({
           where: {
             organizationId: resolvedOrgId,
             product: ProofProductType.INVOICE_PROOF,
-            status: ProofEntitlementStatus.ACTIVE,
+            // Same validity window as PrismaProofBillingAdapter.getActiveEntitlement:
+            // ACTIVE within period, PAST_DUE within grace, CANCELLED until period end.
+            OR: [
+              { status: ProofEntitlementStatus.ACTIVE, OR: [{ periodEnd: null }, { periodEnd: { gte: new Date() } }] },
+              { status: 'PAST_DUE' as ProofEntitlementStatus, graceUntil: { gte: new Date() } },
+              { status: ProofEntitlementStatus.CANCELLED, periodEnd: { gte: new Date() } },
+            ],
           },
         });
         if (entitlement) {
