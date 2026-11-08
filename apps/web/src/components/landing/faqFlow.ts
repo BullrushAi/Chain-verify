@@ -21,7 +21,7 @@ export const flowSteps: readonly FlowStep[] = [
 export const faqEntries: readonly FaqEntry[] = [
   {
     question: 'Do I need an account before checkout?',
-    answer: 'No. Paid plans open a secure Stripe-hosted checkout first. You can create or connect your ChainVerify account after purchase.',
+    answer: 'No. Paid plans open a secure Stripe-hosted checkout first. After purchase, sign in with the same email you used at checkout and your organization will be connected to your account.',
     openByDefault: true,
   },
   {

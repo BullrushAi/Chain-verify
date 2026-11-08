@@ -8,6 +8,7 @@ export const PROOF_BILLING = Symbol('PROOF_BILLING');
 export interface OutboundEmailPort {
   sendInvoiceProofReviewAlert(input: { to:string; orgName:string; scanId:string; riskLevel:string; findingCount:number; topFindings:Array<{pattern:string;severity:string}> }): Promise<void>;
   sendVendorPortalOtp(input: { to:string; vendorName:string; orgName:string; code:string }): Promise<void>;
+  sendCustomerLoginCode(input: { to:string; code:string }): Promise<void>;
   sendPurchaseWelcome(input: { to:string; orgName:string; productName:string; planName:string; monthlyLimit:number|null; welcomeUrl:string; docsUrl:string; supportEmail:string }): Promise<void>;
   sendContactMessage(input: { name:string; email:string; company?:string; topic:'sales'|'support'|'security'|'other'; message:string; submittedAt:Date }): Promise<void>;
 }

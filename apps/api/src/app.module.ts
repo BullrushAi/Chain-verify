@@ -8,7 +8,8 @@ import { AdminModule } from './modules/admin/admin.module.js';
 import { BillingModule } from './modules/billing/billing.module.js';
 import { ContactModule } from './modules/contact/contact.module.js';
 import { UserDashboardModule } from './modules/user-dashboard/user-dashboard.module.js';
+import { CustomerAuthModule } from './modules/customer-auth/customer-auth.module.js';
 
-@Module({imports:[RateLimitingModule,DatabaseModule,ChainVerifyAdaptersModule,VerificationModule,InvoiceProofModule,AdminModule,BillingModule,ContactModule,UserDashboardModule]})
+@Module({imports:[RateLimitingModule,DatabaseModule,ChainVerifyAdaptersModule,VerificationModule,InvoiceProofModule,AdminModule,BillingModule,ContactModule,UserDashboardModule,CustomerAuthModule]})
 export class AppModule {}
 

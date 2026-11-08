@@ -1,6 +1,7 @@
 ﻿import { NextRequest, NextResponse } from 'next/server';
 
 import { dashboardUrl } from '@/lib/dashboardUrl';
+import { proxyAuthHeaders } from '@/lib/proxyAuth';
 
 const API_BASE = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_URL || '';
 
@@ -8,11 +9,10 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
-  const apiKeyHeader = request.headers.get('x-chain-verify-api-key') || request.headers.get('authorization') || '';
-  const apiKey = apiKeyHeader.replace('Bearer ', '');
+  const headers = proxyAuthHeaders(request);
   try {
     const res = await fetch(dashboardUrl(API_BASE, 'overview'), {
-      headers: apiKey ? { Authorization: 'Bearer ' + apiKey } : {},
+      headers,
       cache: 'no-store',
     });
     const text = await res.text();

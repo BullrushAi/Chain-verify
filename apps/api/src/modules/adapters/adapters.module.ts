@@ -17,6 +17,19 @@ export class SmtpOutboundEmailAdapter implements OutboundEmailPort {
  private from(){ return process.env.SMTP_FROM || 'Chain Verify <no-reply@localhost>'; }
  async sendInvoiceProofReviewAlert(i:Parameters<OutboundEmailPort['sendInvoiceProofReviewAlert']>[0]){ await this.transport().sendMail({from:this.from(),to:i.to,subject:`InvoiceProof review required — ${i.riskLevel}`,text:`Organization: ${i.orgName}\nScan: ${i.scanId}\nRisk: ${i.riskLevel}\nFindings: ${i.findingCount}\n${i.topFindings.map(x=>`- ${x.severity}: ${x.pattern}`).join('\n')}`}); }
  async sendVendorPortalOtp(i:Parameters<OutboundEmailPort['sendVendorPortalOtp']>[0]){ await this.transport().sendMail({from:this.from(),to:i.to,subject:'Your InvoiceProof verification code',text:`${i.orgName} requested verification for ${i.vendorName}. Code: ${i.code}. Do not share this code.`}); }
+ async sendCustomerLoginCode(i:Parameters<OutboundEmailPort['sendCustomerLoginCode']>[0]){
+  const brevoKey=process.env.BREVO_API_KEY;
+  if(!brevoKey && !process.env.SMTP_HOST){ this.logger.warn('No email transport configured (set BREVO_API_KEY or SMTP_HOST); login code email not sent'); throw new Error('Email transport not configured'); }
+  const subject='Your ChainVerify sign-in code';
+  const text=`Your ChainVerify sign-in code is ${i.code}. It expires in 10 minutes. Do not share this code.`;
+  const html=`<p>Your ChainVerify sign-in code is <strong>${i.code}</strong>.</p><p>It expires in 10 minutes. Do not share this code.</p>`;
+  if(brevoKey){
+   const res=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'api-key':brevoKey,'content-type':'application/json','accept':'application/json'},body:JSON.stringify({sender:{email:process.env.EMAIL_FROM_ADDRESS||'welcome@chainverify.org',name:process.env.EMAIL_FROM_NAME||'ChainVerify'},to:[{email:i.to}],subject,htmlContent:html,textContent:text})});
+   if(!res.ok){ throw new Error(`Brevo send failed: HTTP ${res.status}`); }
+   return;
+  }
+  await this.transport().sendMail({from:this.from(),to:i.to,subject,text,html});
+ }
  async sendPurchaseWelcome(i:Parameters<OutboundEmailPort['sendPurchaseWelcome']>[0]){
   const brevoKey=process.env.BREVO_API_KEY;
   if(!brevoKey && !process.env.SMTP_HOST){ this.logger.warn('No email transport configured (set BREVO_API_KEY or SMTP_HOST); purchase welcome email not sent'); throw new Error('Email transport not configured'); }
@@ -57,7 +70,10 @@ export class HttpBrowserIntakeAdapter implements BrowserIntakePort {
 @Injectable()
 export class ApiKeyIdentityAdapter implements IdentityContextPort {
  constructor(private readonly prisma:PrismaService){}
- async currentUser(request:any){ const auth=String(request?.headers?.authorization||''); const key=auth.startsWith('Bearer ')?auth.slice(7).trim():String(request?.headers?.['x-chain-verify-api-key']||''); if(!key)return null; const apiKeyHash=sha256Hex(key); const row=await this.prisma.apiIdentity.findFirst({where:{apiKeyHash,active:true}}); if(!row)return null; await this.prisma.apiIdentity.update({where:{id:row.id},data:{lastUsedAt:new Date()}}); return {id:row.id,organizationId:row.organizationId} as any; }
+ async currentUser(request:any){ const auth=String(request?.headers?.authorization||''); const key=auth.startsWith('Bearer ')?auth.slice(7).trim():String(request?.headers?.['x-chain-verify-api-key']||''); if(!key)return null; const apiKeyHash=sha256Hex(key); const row=await this.prisma.apiIdentity.findFirst({where:{apiKeyHash,active:true}}); if(row){ await this.prisma.apiIdentity.update({where:{id:row.id},data:{lastUsedAt:new Date()}}); return {id:row.id,organizationId:row.organizationId} as any; }
+  // Otherwise the Bearer value may be an email-login session token (Task 1):
+  // only its SHA-256 hash is stored, and only a live, unexpired session counts.
+  const session=await this.prisma.customerSession.findFirst({where:{tokenHash:apiKeyHash,expiresAt:{gt:new Date()}},include:{user:true}}); if(!session)return null; return {id:session.userId,organizationId:session.organizationId??session.user.organizationId??undefined,email:session.user.email} as any; }
 }
 
 @Injectable()

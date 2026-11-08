@@ -118,6 +118,7 @@ model Organization {
   scanFindingApprovals ScanFindingApproval[]
   vendorPortalTokens VendorPortalToken[]
   apiIdentities ApiIdentity[]
+  customerUsers CustomerUser[]
 }
 
 model ProofProductEntitlement {
@@ -610,5 +611,49 @@ enum SoftwareVerificationStatus {
   FAILED
   NEEDS_REVIEW
   ESCALATED
+}
+
+// ---------------------------------------------------------------------------
+// Customer email login (Task 1). No passwords: a 6-digit code is emailed and
+// verified once, then a 30-day session token is minted. Only HMAC hashes of
+// codes and SHA-256 hashes of session tokens are stored, never the values.
+// ---------------------------------------------------------------------------
+model CustomerUser {
+  id             String        @id @default(cuid())
+  email          String        @unique
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  sessions       CustomerSession[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@map("customer_users")
+}
+
+model CustomerLoginCode {
+  id         String    @id @default(cuid())
+  email      String
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  consumedAt DateTime?
+  lockedAt   DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([email, createdAt])
+  @@map("customer_login_codes")
+}
+
+model CustomerSession {
+  id             String       @id @default(cuid())
+  userId         String
+  user           CustomerUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash      String       @unique
+  organizationId String?
+  expiresAt      DateTime
+  createdAt      DateTime     @default(now())
+
+  @@index([userId])
+  @@map("customer_sessions")
 }
 

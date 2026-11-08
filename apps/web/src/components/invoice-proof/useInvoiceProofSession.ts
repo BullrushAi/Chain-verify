@@ -3,9 +3,13 @@
 import { createContext, useContext } from 'react';
 
 export interface InvoiceProofSession {
-  /** The customer's Chain Verify API key. */
+  /** The customer's Chain Verify API key. Empty for email sessions, which authenticate via the session cookie. */
   apiKey: string;
-  /** Clears the stored key and returns to the key form, optionally explaining why. */
+  /** Signed-in email for email sessions; undefined for API-key sessions. */
+  email?: string;
+  /** How this session was established. */
+  authKind?: 'api-key' | 'email';
+  /** Clears the session and returns to the sign-in form, optionally explaining why. */
   signOut: (reason?: string) => void;
 }
 

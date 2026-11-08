@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 
 import { ChainVerifyMark } from '@/components/brand/ChainVerifyMark';
+import { fetchCustomerMe, signOutCustomer } from '@/lib/customerAuth';
 import { ThemeToggle } from '@/components/brand/ThemeToggle';
 import { ProofCheckoutButton } from '@/components/proof/ProofCheckoutButton';
 
@@ -29,6 +30,7 @@ export function ProductNav({ currentProduct, pageAnchors = [] }: ProductNavProps
   const [mobileOpen, setMobileOpen] = useState(false);
   const [productsOpen, setProductsOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const [signedInEmail, setSignedInEmail] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -57,6 +59,20 @@ export function ProductNav({ currentProduct, pageAnchors = [] }: ProductNavProps
     document.body.style.overflow = mobileOpen ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
   }, [mobileOpen]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchCustomerMe()
+      .then((me) => {
+        if (!cancelled) setSignedInEmail(me ? me.email : null);
+      })
+      .catch(() => {
+        if (!cancelled) setSignedInEmail(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <header className={`cv-product-nav ${scrolled ? 'is-scrolled' : ''}`}>
@@ -95,6 +111,21 @@ export function ProductNav({ currentProduct, pageAnchors = [] }: ProductNavProps
           </div>
 
           <ThemeToggle />
+
+          {signedInEmail ? (
+            <span style={{ fontSize: 14, whiteSpace: 'nowrap' }}>
+              Signed in as {signedInEmail}{' '}
+              <button
+                type="button"
+                onClick={() => {
+                  void signOutCustomer().finally(() => window.location.reload());
+                }}
+                style={{ textDecoration: 'underline', background: 'none', border: 0, cursor: 'pointer', fontSize: 14, padding: 0 }}
+              >
+                Sign out
+              </button>
+            </span>
+          ) : null}
 
           <ProofCheckoutButton product={currentProduct} planSlug={PRODUCT_CTA[currentProduct].planSlug} className="cv-nav-cta">
             {PRODUCT_CTA[currentProduct].label} <span>→</span>
