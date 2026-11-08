@@ -191,3 +191,29 @@ describe('user-dashboard proxies', () => {
     expect(scans).toContain("dashboardUrl(API_BASE, 'scans', search)");
   });
 });
+
+describe('user-dashboard api-keys proxy — customer key mutations', () => {
+  const routesDir = join(
+    dirname(fileURLToPath(import.meta.url)),
+    '../app/api/proxy/user-dashboard',
+  );
+
+  it('exposes POST create and DELETE retire through the customer proxy', () => {
+    const src = readFileSync(join(routesDir, 'api-keys', 'route.ts'), 'utf8');
+    expect(src).toContain('export async function POST');
+    expect(src).toContain('export async function DELETE');
+    expect(src).toContain("method: 'POST'");
+    expect(src).toContain("method: 'DELETE'");
+    // Both mutations ride the shared auth helper (stored key first, email
+    // session on a 401), like GET — no mutation route can silently drop auth.
+    expect(src).toContain('proxyFetchWithSessionFallback');
+  });
+
+  it('never routes customer key management through the admin endpoint', () => {
+    const src = readFileSync(join(routesDir, 'api-keys', 'route.ts'), 'utf8');
+    expect(src).not.toContain('/api/admin');
+    expect(src).not.toContain('x-admin-key');
+    expect(src).not.toContain('adminApi');
+    expect(src).not.toContain('console.log');
+  });
+});

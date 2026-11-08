@@ -1,15 +1,11 @@
-import { randomBytes } from 'node:crypto';
-
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../database/prisma.service.js';
-import { sha256Hex } from '../../common/utils/api-key-hash.js';
+import { API_KEY_REVEAL_WARNING, mintOrgApiKey } from '../../common/utils/api-key-mint.js';
 
-// Marks keys minted through the admin panel as customer-facing, org-scoped
-// ApiIdentity keys — distinct from the cv_admin_ prefix used for AdminIdentity
-// keys (see apps/api/scripts/create-admin-key.ts).
-const ORG_API_KEY_PREFIX = 'cv_live_';
+// Key minting lives in the shared helper (common/utils/api-key-mint.ts) —
+// the admin panel and the customer dashboard mint keys the same way.
 
 const DEFAULT_AUDIT_LOG_PAGE_SIZE = 50;
 const MAX_AUDIT_LOG_PAGE_SIZE = 200;
@@ -141,32 +137,26 @@ export class AdminService {
     if (!org) throw new NotFoundException(`Organization ${organizationId} not found`);
 
     const trimmedLabel = (label ?? '').trim() || null;
-    const rawKey = `${ORG_API_KEY_PREFIX}${randomBytes(32).toString('hex')}`;
-    const apiKeyHash = sha256Hex(rawKey);
 
-    const created = await this.prisma.$transaction(async (tx) => {
-      const identity = await tx.apiIdentity.create({
-        data: { organizationId, label: trimmedLabel, apiKeyHash },
-      });
+    return this.prisma.$transaction(async (tx) => {
+      const { identity, apiKey } = await mintOrgApiKey(tx, organizationId, trimmedLabel);
       await this.recordAuditLog(tx, adminIdentityId, 'CREATE_API_KEY', trimmedReason, {
         organizationId,
         apiIdentityId: identity.id,
         label: trimmedLabel,
       });
-      return identity;
+      return {
+        id: identity.id,
+        organizationId: identity.organizationId,
+        label: identity.label,
+        active: identity.active,
+        createdAt: identity.createdAt,
+        // Shown exactly once — never persisted in plaintext, never returned by
+        // any other endpoint. The caller must copy it now.
+        apiKey,
+        warning: API_KEY_REVEAL_WARNING,
+      };
     });
-
-    return {
-      id: created.id,
-      organizationId: created.organizationId,
-      label: created.label,
-      active: created.active,
-      createdAt: created.createdAt,
-      // Shown exactly once — never persisted in plaintext, never returned by
-      // any other endpoint. The caller must copy it now.
-      apiKey: rawKey,
-      warning: 'This key will not be shown again. Store it securely now.',
-    };
   }
 
   async revokeApiKey(apiIdentityId: string, reason: string, adminIdentityId: string) {

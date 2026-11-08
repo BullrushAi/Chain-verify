@@ -1,5 +1,6 @@
 ﻿import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
+import { API_KEY_REVEAL_WARNING, mintOrgApiKey } from '../../common/utils/api-key-mint.js';
 
 const API_IDENTITY_SAFE_SELECT = {
   id: true,
@@ -73,6 +74,41 @@ export class UserDashboardService {
     });
   }
 
+  /**
+   * Mints a customer API key with the same shared logic the admin panel uses
+   * (see api-key-mint.ts): same prefix, same hash-only storage, raw key
+   * returned exactly once, in this response. The list endpoint never returns
+   * key material — see getApiKeys and API_IDENTITY_SAFE_SELECT.
+   */
+  async createApiKey(organizationId: string, label: string) {
+    const org = await this.prisma.organization.findUnique({ where: { id: organizationId } });
+    if (!org) throw new NotFoundException('Organization not found');
+    const { identity, apiKey } = await mintOrgApiKey(this.prisma, organizationId, label);
+    return { ...identity, apiKey, warning: API_KEY_REVEAL_WARNING };
+  }
+
+  /**
+   * Retires one of the caller's own keys. Scoped to the organization: a key
+   * from another org is a 404, never a cross-tenant action. Idempotent —
+   * revoking an already-revoked key is a no-op, not an error. The row is
+   * never deleted, so past usage stays attributable.
+   */
+  async revokeApiKey(organizationId: string, apiIdentityId: string) {
+    const identity = await this.prisma.apiIdentity.findUnique({
+      where: { id: apiIdentityId },
+      select: API_IDENTITY_SAFE_SELECT,
+    });
+    if (!identity || identity.organizationId !== organizationId) {
+      throw new NotFoundException('API key not found');
+    }
+    if (!identity.active) return identity;
+    return this.prisma.apiIdentity.update({
+      where: { id: apiIdentityId },
+      data: { active: false },
+      select: API_IDENTITY_SAFE_SELECT,
+    });
+  }
+
   async getBilling(organizationId: string) {
     const now = new Date();
     const periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -103,4 +139,3 @@ export class UserDashboardService {
     return { organization: org, apiKeyCount };
   }
 }
-

@@ -1,6 +1,22 @@
-﻿import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
+﻿import { Body, Controller, Delete, Get, Param, Post, Query, Req, UnauthorizedException, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { UserDashboardService } from './user-dashboard.service.js';
+
+interface CreateCustomerApiKeyBody {
+  label?: string;
+}
+
+/**
+ * Key creation/retirement is an account action, not a machine action: only an
+ * email session may do it. req.user carries `email` only for email-login
+ * sessions (see ApiKeyIdentityAdapter); a bare API key — even a valid one for
+ * the org — must not mint new keys, or a leaked key could mint replacements.
+ */
+function requireEmailSession(req: any) {
+  if (!req.user?.email) {
+    throw new UnauthorizedException('Email sign-in required to manage API keys');
+  }
+}
 
 @Controller('user-dashboard')
 @UseGuards(JwtAuthGuard)
@@ -25,6 +41,20 @@ export class UserDashboardController {
     return this.svc.getApiKeys(orgId);
   }
 
+  @Post('api-keys')
+  createApiKey(@Req() req: any, @Body() body: CreateCustomerApiKeyBody) {
+    const orgId = req.user?.organizationId || req.user?.orgId;
+    requireEmailSession(req);
+    return this.svc.createApiKey(orgId, body?.label ?? '');
+  }
+
+  @Delete('api-keys/:apiIdentityId')
+  revokeApiKey(@Req() req: any, @Param('apiIdentityId') apiIdentityId: string) {
+    const orgId = req.user?.organizationId || req.user?.orgId;
+    requireEmailSession(req);
+    return this.svc.revokeApiKey(orgId, apiIdentityId);
+  }
+
   @Get('billing')
   getBilling(@Req() req: any) {
     const orgId = req.user?.organizationId || req.user?.orgId;
@@ -43,4 +73,3 @@ export class UserDashboardController {
     return this.svc.getSettings(orgId);
   }
 }
-
