@@ -1167,3 +1167,48 @@ describe('VerifyApiController proof signing status in the create response', () =
     expect(result.proof_signature).toBe('c2ln');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Pilot intake stores contactEmail lowercased: resolveOrganizationId
+// (customer-auth) only ever queries with a lowercased email, so a mixed-case
+// intake would never match a login and the buyer would sign in to an empty
+// account. Matches the Stripe provisioning and activation-form paths.
+// ---------------------------------------------------------------------------
+describe('VerifyApiController pilot intake email normalization', () => {
+  function makeController(prisma: unknown) {
+    return new VerifyApiController(
+      {} as never,
+      {} as never,
+      prisma as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+  }
+
+  it('stores a mixed-case contactEmail lowercased', async () => {
+    const create = vi.fn().mockImplementation(async ({ data }: any) => ({ id: 'intake-1', ...data }));
+    const controller = makeController({ proofPilotIntake: { create } });
+    const result = await controller.pilotIntake(
+      { product: 'InvoiceProof', companyName: 'Acme Corp', contactEmail: '  Buyer@Example.COM ' } as never,
+      { headers: {} } as never,
+    );
+    expect(result).toEqual({ ok: true, intakeId: 'intake-1' });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0][0].data.contactEmail).toBe('buyer@example.com');
+  });
+
+  it('still rejects an intake with no contact email', async () => {
+    const create = vi.fn();
+    const controller = makeController({ proofPilotIntake: { create } });
+    await expect(
+      controller.pilotIntake(
+        { product: 'InvoiceProof', companyName: 'Acme Corp' } as never,
+        { headers: {} } as never,
+      ),
+    ).rejects.toThrow('contactEmail is required');
+    expect(create).not.toHaveBeenCalled();
+  });
+});

@@ -183,6 +183,30 @@ describe('CustomerAuthService.verifyCode', () => {
     });
   });
 
+  it('matches a mixed-case login against a stored intake when the intake email is normalized', async () => {
+    // The intake store is case-sensitive (like the database): only the
+    // lowercased email the intake write stores can match the lowercased
+    // login email resolveOrganizationId queries with.
+    const stored = [{ organizationId: ORG_ID, stripeSessionId: 'cs_test_123', contactEmail: EMAIL }];
+    const prisma = makePrisma({
+      customerLoginCode: {
+        findMany: vi.fn().mockResolvedValue([]),
+        findFirst: vi.fn().mockResolvedValue(challengeRow('482917')),
+        create: vi.fn(),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      proofPilotIntake: {
+        findMany: vi.fn().mockImplementation(async ({ where }: any) =>
+          stored.filter((row) => row.contactEmail === where.contactEmail),
+        ),
+      },
+    });
+    const { service } = makeService(prisma);
+    const result = await service.verifyCode('  Buyer@Example.COM ', '482917');
+    expect(result.organizationId).toBe(ORG_ID);
+    expect((prisma.proofPilotIntake.findMany as any).mock.calls[0][0].where.contactEmail).toBe(EMAIL);
+  });
+
   it('rejects a wrong code with the generic message and never reveals which check failed', async () => {
     const prisma = makePrisma({
       customerLoginCode: {

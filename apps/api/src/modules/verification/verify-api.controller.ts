@@ -2471,7 +2471,11 @@ export class VerifyApiController {
     // Required field validation.
     const product = body?.product?.trim() || 'auditproof';
     const companyName = body?.companyName?.trim();
-    const contactEmail = body?.contactEmail?.trim();
+    // Lowercase: resolveOrganizationId (customer-auth) only ever queries with a
+    // lowercased email, so a mixed-case intake would never match a login and
+    // the buyer would sign in to an empty account. Matches the Stripe
+    // provisioning and activation-form paths, which already lowercase.
+    const contactEmail = body?.contactEmail?.trim().toLowerCase();
 
     if (!companyName) {
       throw new BadRequestException('companyName is required');

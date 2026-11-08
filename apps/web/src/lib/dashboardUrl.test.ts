@@ -165,13 +165,26 @@ describe('user-dashboard proxies', () => {
       const src = readFileSync(join(routesDir, suffix, 'route.ts'), 'utf8');
       expect(src).toContain('dashboardUrl');
       expect(src).toContain(`dashboardUrl(API_BASE, '${suffix}'`);
-      expect(src).toContain('x-chain-verify-api-key');
-      expect(src).toContain("Authorization: 'Bearer ' + apiKey");
+      // Auth rides in the shared helper: every route must call it (it sends
+      // the stored key first and falls back to the session cookie on a 401),
+      // so no route can silently drop auth.
+      expect(src).toContain('proxyFetchWithSessionFallback');
+      expect(src).toContain(`proxyFetchWithSessionFallback(request, dashboardUrl(API_BASE, '${suffix}'`);
       expect(src).not.toContain('chain-verify-api.onrender.com');
       expect(src).not.toContain('api.chainverify.org');
       expect(src).not.toContain("'/user-dashboard/");
       expect(src).not.toContain('"/user-dashboard/');
     }
+
+    // The shared helper itself still sends the stored key header (and the
+    // session cookie as the 401 fallback) -- the routes inherit it from here.
+    const proxyAuth = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), 'proxyAuth.ts'),
+      'utf8',
+    );
+    expect(proxyAuth).toContain('x-chain-verify-api-key');
+    expect(proxyAuth).toContain("Authorization: 'Bearer ' + apiKey");
+    expect(proxyAuth).toContain("Authorization: 'Bearer ' + session");
 
     const scans = readFileSync(join(routesDir, 'scans', 'route.ts'), 'utf8');
     expect(scans).toContain('request.nextUrl.searchParams.toString()');
