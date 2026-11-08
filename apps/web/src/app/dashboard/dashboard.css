@@ -28,3 +28,34 @@
 @media (max-width: 720px) {
   .ipa-grid-3 { grid-template-columns: 1fr; }
 }
+
+/* Shared dashboard top navigation (Task 2): links, org, account, New scan. */
+.ipa-dashnav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--cv-surface-solid);
+  border: 1px solid var(--cv-line);
+  border-radius: 14px;
+  padding: 10px 14px;
+}
+.ipa-dashnav-links { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.ipa-dashnav-link {
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--cv-muted);
+  text-decoration: none;
+}
+.ipa-dashnav-link:hover { color: var(--cv-text); }
+.ipa-dashnav-link.is-active { background: var(--cv-surface-2); color: var(--cv-text); }
+.ipa-dashnav-account { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 13px; }
+.ipa-dashnav-org { font-weight: 700; }
+
+@media (max-width: 720px) {
+  .ipa-dashnav { flex-direction: column; align-items: stretch; }
+  .ipa-dashnav-account { justify-content: flex-start; }
+}

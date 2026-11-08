@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useInvoiceProofSession } from '@/components/invoice-proof/useInvoiceProofSession';
+import { DashboardNav } from './DashboardNav';
 
 interface Scan {
   id: string;
@@ -81,16 +82,14 @@ export function ScansDashboard() {
     }
   };
 
-  if (loading) return <div className='ipa-panel'><p className='ipa-muted'>Loading scans...</p></div>;
-  if (error) return <div className='ipa-panel'><p className='ipa-error'>{error}</p><button className='ipa-btn ipa-btn-secondary' onClick={() => void load()}>Retry</button></div>;
+  if (loading) return (<div className='ipa-stack'><DashboardNav current='scans' /><div className='ipa-panel'><p className='ipa-muted'>Loading scans...</p></div></div>);
+  if (error) return (<div className='ipa-stack'><DashboardNav current='scans' /><div className='ipa-panel'><p className='ipa-error'>{error}</p><button className='ipa-btn ipa-btn-secondary' onClick={() => void load()}>Retry</button></div></div>);
 
   return (
     <div className='ipa-stack'>
+      <DashboardNav current='scans' />
       <header className='ipa-panel'>
-        <div className='ipa-row' style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <h1 className='ipa-h1'>Scans / History</h1>
-          <Link className='ipa-link' href='/dashboard'>Back to Dashboard</Link>
-        </div>
+        <h1 className='ipa-h1'>Scans / History</h1>
         <p className='ipa-sub'>Every verification run on your account, newest first.</p>
       </header>
 
@@ -98,7 +97,7 @@ export function ScansDashboard() {
         {items.length === 0 ? <p className='ipa-muted'>No scans yet.</p> : (
           <div className='ipa-table-wrap'>
             <table className='ipa-table'>
-              <thead><tr><th>ID</th><th>Product</th><th>Source</th><th>Status</th><th>Risk</th><th>Confidence</th><th>Summary</th><th>Created</th></tr></thead>
+              <thead><tr><th>ID</th><th>Product</th><th>Source</th><th>Status</th><th>Risk</th><th>Confidence</th><th>Summary</th><th>Created</th><th>Actions</th></tr></thead>
               <tbody>
                 {items.map((s) => (
                   <tr key={s.id}>
@@ -110,6 +109,7 @@ export function ScansDashboard() {
                     <td>{s.confidence === null ? '—' : s.confidence}</td>
                     <td>{s.outputSummary || s.inputSummary}</td>
                     <td>{new Date(s.createdAt).toLocaleString()}</td>
+                    <td><Link className='ipa-link' href={`/invoice-proof/review/${s.id}`}>Review</Link></td>
                   </tr>
                 ))}
               </tbody>

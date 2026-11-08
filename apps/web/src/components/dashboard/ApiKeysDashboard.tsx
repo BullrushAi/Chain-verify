@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
 import { useInvoiceProofSession } from '@/components/invoice-proof/useInvoiceProofSession';
+import { DashboardNav } from './DashboardNav';
 
 interface ApiKey {
   id: string;
@@ -44,17 +44,15 @@ export function ApiKeysDashboard() {
     void load();
   }, [load]);
 
-  if (loading) return <div className='ipa-panel'><p className='ipa-muted'>Loading API keys...</p></div>;
-  if (error) return <div className='ipa-panel'><p className='ipa-error'>{error}</p><button className='ipa-btn ipa-btn-secondary' onClick={() => void load()}>Retry</button></div>;
+  if (loading) return (<div className='ipa-stack'><DashboardNav current='api-keys' /><div className='ipa-panel'><p className='ipa-muted'>Loading API keys...</p></div></div>);
+  if (error) return (<div className='ipa-stack'><DashboardNav current='api-keys' /><div className='ipa-panel'><p className='ipa-error'>{error}</p><button className='ipa-btn ipa-btn-secondary' onClick={() => void load()}>Retry</button></div></div>);
   if (!keys) return null;
 
   return (
     <div className='ipa-stack'>
+      <DashboardNav current='api-keys' />
       <header className='ipa-panel'>
-        <div className='ipa-row' style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <h1 className='ipa-h1'>API Keys</h1>
-          <Link className='ipa-link' href='/dashboard'>Back to Dashboard</Link>
-        </div>
+        <h1 className='ipa-h1'>API Keys</h1>
         <p className='ipa-sub'>Keys that can call the Chain Verify API for your organization. This list is read-only — keys are added and removed through Chain Verify admin flows.</p>
       </header>
 

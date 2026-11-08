@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
 import { useInvoiceProofSession } from '@/components/invoice-proof/useInvoiceProofSession';
+import { DashboardNav } from './DashboardNav';
 
 interface Entitlement {
   id: string;
@@ -53,17 +53,15 @@ export function BillingDashboard() {
     void load();
   }, [load]);
 
-  if (loading) return <div className='ipa-panel'><p className='ipa-muted'>Loading billing...</p></div>;
-  if (error) return <div className='ipa-panel'><p className='ipa-error'>{error}</p><button className='ipa-btn ipa-btn-secondary' onClick={() => void load()}>Retry</button></div>;
+  if (loading) return (<div className='ipa-stack'><DashboardNav current='billing' /><div className='ipa-panel'><p className='ipa-muted'>Loading billing...</p></div></div>);
+  if (error) return (<div className='ipa-stack'><DashboardNav current='billing' /><div className='ipa-panel'><p className='ipa-error'>{error}</p><button className='ipa-btn ipa-btn-secondary' onClick={() => void load()}>Retry</button></div></div>);
   if (!billing) return null;
 
   return (
     <div className='ipa-stack'>
+      <DashboardNav current='billing' />
       <header className='ipa-panel'>
-        <div className='ipa-row' style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <h1 className='ipa-h1'>Billing / Subscription</h1>
-          <Link className='ipa-link' href='/dashboard'>Back to Dashboard</Link>
-        </div>
+        <h1 className='ipa-h1'>Billing / Subscription</h1>
         <p className='ipa-sub'>Your plans and how much you have used this month.</p>
       </header>
 

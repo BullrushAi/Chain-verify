@@ -18,10 +18,11 @@ export class UserDashboardService {
   async getOverview(organizationId: string) {
     const now = new Date();
     const periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const [org, activeApiKeyCount, verificationRunsThisMonth, recentRuns] = await Promise.all([
+    const [org, activeApiKeyCount, verificationRunsThisMonth, scansNeedingReview, recentRuns] = await Promise.all([
       this.prisma.organization.findUnique({ where: { id: organizationId } }),
       this.prisma.apiIdentity.count({ where: { organizationId, active: true } }),
       this.prisma.verificationRun.count({ where: { orgId: organizationId, createdAt: { gte: periodStart } } }),
+      this.prisma.verificationRun.count({ where: { orgId: organizationId, status: { in: ['FAILED', 'NEEDS_REVIEW'] } } }),
       this.prisma.verificationRun.findMany({
         where: { orgId: organizationId },
         orderBy: { createdAt: 'desc' },
@@ -34,6 +35,7 @@ export class UserDashboardService {
       organization: { id: org.id, name: org.name, slug: org.slug, createdAt: org.createdAt },
       activeApiKeyCount,
       verificationRunsThisMonth,
+      scansNeedingReview,
       recentRuns,
     };
   }
