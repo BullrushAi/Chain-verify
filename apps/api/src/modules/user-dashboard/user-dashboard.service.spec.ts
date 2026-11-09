@@ -20,6 +20,10 @@ function applySelect<T extends Record<string, unknown>>(row: T, select?: Record<
 function fakePrisma() {
   const store = new Map<string, Record<string, unknown>>();
   let idCounter = 0;
+  // Verification runs + entitlements seeded by the tenant-isolation tests.
+  // They stand in for another org's rows (never real Aptria data).
+  const runs: Array<Record<string, unknown>> = [];
+  const entitlements: Array<Record<string, unknown>> = [];
   const apiIdentity = {
     findUnique: vi.fn(async ({ where, select }: { where: { id: string }; select?: Record<string, boolean> }) => {
       const row = store.get(where.id);
@@ -27,7 +31,13 @@ function fakePrisma() {
     }),
     findMany: vi.fn(
       async ({ where, select }: { where: { organizationId: string }; select?: Record<string, boolean> }) => {
-        const rows = Array.from(store.values()).filter((row) => row.organizationId === where.organizationId);
+        // Mirror real Prisma: an `undefined` filter value is dropped, so the
+        // query runs unscoped and returns every org's rows. The service must
+        // never pass an undefined org id here (see the no-org tests below).
+        const rows =
+          where.organizationId === undefined
+            ? Array.from(store.values())
+            : Array.from(store.values()).filter((row) => row.organizationId === where.organizationId);
         return rows.map((row) => applySelect(row, select));
       },
     ),
@@ -70,10 +80,52 @@ function fakePrisma() {
     apiIdentity,
     verificationRun: {
       count: vi.fn().mockResolvedValue(3),
-      findMany: vi.fn().mockResolvedValue([]),
+      findMany: vi.fn(
+        async (args: {
+          where?: { orgId?: string };
+          take?: number;
+          cursor?: { id: string };
+          select?: Record<string, boolean>;
+        }) => {
+          // Mirror real Prisma: an `undefined` org filter is dropped and
+          // the query returns every org's runs.
+          const scoped =
+            args?.where?.orgId === undefined ? runs : runs.filter((row) => row.orgId === args.where?.orgId);
+          const sorted = [...scoped].sort(
+            (a, b) => new Date(b.createdAt as string).getTime() - new Date(a.createdAt as string).getTime(),
+          );
+          let rows = sorted;
+          if (args?.cursor?.id) {
+            const at = rows.findIndex((row) => row.id === args.cursor?.id);
+            if (at >= 0) rows = rows.slice(at + 1);
+          }
+          return rows.slice(0, args?.take ?? rows.length).map((row) => applySelect(row, args?.select));
+        },
+      ),
+      groupBy: vi.fn(async (args: { where?: { orgId?: string; createdAt?: unknown }; by?: string[] }) => {
+        // Mirror real Prisma: an `undefined` org filter is dropped.
+        const scoped =
+          args?.where?.orgId === undefined ? runs : runs.filter((row) => row.orgId === args.where?.orgId);
+        const byProduct = new Map<string, number>();
+        for (const row of scoped) {
+          byProduct.set(row.product as string, (byProduct.get(row.product as string) ?? 0) + 1);
+        }
+        return Array.from(byProduct.entries()).map(([product, count]) => ({
+          product,
+          _count: { _all: count },
+        }));
+      }),
+    },
+    proofProductEntitlement: {
+      findMany: vi.fn(async ({ where }: { where: { organizationId: string } }) => {
+        // Mirror real Prisma: an `undefined` filter value is dropped.
+        return where.organizationId === undefined
+          ? entitlements
+          : entitlements.filter((row) => row.organizationId === where.organizationId);
+      }),
     },
   };
-  return { prisma, store, apiIdentity };
+  return { prisma, store, runs, entitlements, apiIdentity };
 }
 
 describe('UserDashboardService.getOverview', () => {
@@ -238,5 +290,160 @@ describe('UserDashboardService.revokeApiKey', () => {
 
     expect(revoked.active).toBe(false);
     expect(apiIdentity.update).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Tenant isolation (CBV fix round Task 1, Nov 8 2026). Live, a brand-new
+ * email sign-in with no org saw another org's scans and keys because the
+ * service passed the session's undefined org id straight into Prisma, which
+ * drops undefined filters and runs the query unscoped. The fake Prisma
+ * above mirrors that: an undefined org filter returns EVERY org's rows.
+ * These tests seed another org's rows and prove a null-org / fresh-user
+ * session sees zero scans and zero keys — and that no unscoped query runs.
+ * The seeded "other org" stands in for the real Aptria org; no real Aptria
+ * data or key is ever used here. The fresh-user email matches no intake.
+ */
+const OTHER_ORG = 'org-other';
+
+function seedOtherOrgData(
+  store: Map<string, Record<string, unknown>>,
+  runs: Array<Record<string, unknown>>,
+  entitlements: Array<Record<string, unknown>>,
+) {
+  store.set('key-other', {
+    id: 'key-other',
+    organizationId: OTHER_ORG,
+    label: 'Other Org Key',
+    apiKeyHash: 'other-hash-that-must-never-leave',
+    active: true,
+    lastUsedAt: new Date('2026-11-08T16:17:34.000Z'),
+    createdAt: new Date('2026-09-28T00:00:00.000Z'),
+    updatedAt: new Date('2026-11-08T00:00:00.000Z'),
+  });
+  runs.push({
+    id: 'run-other-1',
+    orgId: OTHER_ORG,
+    product: 'invoice-proof',
+    sourceType: 'API',
+    status: 'FAILED',
+    riskLevel: 'HIGH',
+    inputSummary: 'other org scan',
+    outputSummary: 'other org result',
+    confidence: 0.9,
+    createdAt: new Date('2026-11-08T16:17:36.000Z'),
+    updatedAt: new Date('2026-11-08T16:17:36.000Z'),
+  });
+  entitlements.push({
+    id: 'ent-other-1',
+    organizationId: OTHER_ORG,
+    product: 'INVOICE_PROOF',
+    planSlug: 'proof-pilot',
+    status: 'ACTIVE',
+    createdAt: new Date('2026-09-28T00:00:00.000Z'),
+    updatedAt: new Date('2026-09-28T00:00:00.000Z'),
+  });
+}
+
+describe('UserDashboardService no-org tenant isolation', () => {
+  it('the fake mirrors real Prisma: an undefined org filter returns every orgs rows', async () => {
+    const { prisma, store, runs, entitlements } = fakePrisma();
+    seedOtherOrgData(store, runs, entitlements);
+    const keys = await (prisma.apiIdentity.findMany as any)({ where: { organizationId: undefined } });
+    expect(keys).toHaveLength(1);
+    expect(keys[0].id).toBe('key-other');
+    const scans = await (prisma.verificationRun.findMany as any)({ where: { orgId: undefined } });
+    expect(scans).toHaveLength(1);
+    expect(scans[0].id).toBe('run-other-1');
+    const billing = await (prisma.proofProductEntitlement.findMany as any)({
+      where: { organizationId: undefined },
+    });
+    expect(billing).toHaveLength(1);
+  });
+
+  it('getScans(null) and getScans(undefined) return empty and run no query', async () => {
+    const { prisma, store, runs, entitlements } = fakePrisma();
+    seedOtherOrgData(store, runs, entitlements);
+    const svc = new UserDashboardService(prisma as unknown as PrismaService);
+    await expect(svc.getScans(null)).resolves.toEqual({ items: [], nextCursor: null });
+    await expect(svc.getScans(undefined)).resolves.toEqual({ items: [], nextCursor: null });
+    expect(prisma.verificationRun.findMany).not.toHaveBeenCalled();
+  });
+
+  it('getScans returns only the caller orgs runs', async () => {
+    const { prisma, store, runs, entitlements } = fakePrisma();
+    seedOtherOrgData(store, runs, entitlements);
+    runs.push({
+      id: 'run-mine-1',
+      orgId: 'org-test',
+      product: 'invoice-proof',
+      sourceType: 'API',
+      status: 'PASSED',
+      riskLevel: 'LOW',
+      inputSummary: 'my scan',
+      outputSummary: 'ok',
+      confidence: 0.99,
+      createdAt: new Date('2026-11-08T10:00:00.000Z'),
+      updatedAt: new Date('2026-11-08T10:00:00.000Z'),
+    });
+    const svc = new UserDashboardService(prisma as unknown as PrismaService);
+    const result = await svc.getScans('org-test');
+    expect(result.items.map((row: any) => row.id)).toEqual(['run-mine-1']);
+    expect(result.nextCursor).toBeNull();
+    expect(prisma.verificationRun.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { orgId: 'org-test' } }),
+    );
+  });
+
+  it('getApiKeys(null) and getApiKeys(undefined) return empty and run no query', async () => {
+    const { prisma, store, runs, entitlements } = fakePrisma();
+    seedOtherOrgData(store, runs, entitlements);
+    const svc = new UserDashboardService(prisma as unknown as PrismaService);
+    await expect(svc.getApiKeys(null)).resolves.toEqual([]);
+    await expect(svc.getApiKeys(undefined)).resolves.toEqual([]);
+    expect(prisma.apiIdentity.findMany).not.toHaveBeenCalled();
+  });
+
+  it('getApiKeys for a real org never returns another orgs keys', async () => {
+    const { prisma, store, runs, entitlements } = fakePrisma();
+    seedOtherOrgData(store, runs, entitlements);
+    const svc = new UserDashboardService(prisma as unknown as PrismaService);
+    await expect(svc.getApiKeys('org-test')).resolves.toEqual([]);
+    expect(prisma.apiIdentity.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { organizationId: 'org-test' } }),
+    );
+  });
+
+  it('getBilling(null) returns empty entitlements and usage and runs no query', async () => {
+    const { prisma, store, runs, entitlements } = fakePrisma();
+    seedOtherOrgData(store, runs, entitlements);
+    const svc = new UserDashboardService(prisma as unknown as PrismaService);
+    await expect(svc.getBilling(null)).resolves.toEqual({ entitlements: [], usageThisMonth: [] });
+    await expect(svc.getBilling(undefined)).resolves.toEqual({ entitlements: [], usageThisMonth: [] });
+    expect(prisma.proofProductEntitlement.findMany).not.toHaveBeenCalled();
+    expect(prisma.verificationRun.groupBy).not.toHaveBeenCalled();
+  });
+
+  it('getOverview / getOrganization / getSettings reject for a no-org session before any query', async () => {
+    const { prisma, store, runs, entitlements } = fakePrisma();
+    seedOtherOrgData(store, runs, entitlements);
+    const svc = new UserDashboardService(prisma as unknown as PrismaService);
+    await expect(svc.getOverview(null)).rejects.toThrow('Organization not found');
+    await expect(svc.getOrganization(undefined)).rejects.toThrow('Organization not found');
+    await expect(svc.getSettings(null)).rejects.toThrow('Organization not found');
+    expect(prisma.organization.findUnique).not.toHaveBeenCalled();
+    expect(prisma.verificationRun.count).not.toHaveBeenCalled();
+    expect(prisma.apiIdentity.count).not.toHaveBeenCalled();
+  });
+
+  it('createApiKey and revokeApiKey reject for a no-org session and never touch a key', async () => {
+    const { prisma, store, runs, entitlements } = fakePrisma();
+    seedOtherOrgData(store, runs, entitlements);
+    const svc = new UserDashboardService(prisma as unknown as PrismaService);
+    await expect(svc.createApiKey(null, 'label')).rejects.toThrow('Organization not found');
+    await expect(svc.createApiKey(undefined, 'label')).rejects.toThrow('Organization not found');
+    await expect(svc.revokeApiKey(null, 'key-other')).rejects.toThrow('Organization not found');
+    expect(prisma.apiIdentity.create).not.toHaveBeenCalled();
+    expect(prisma.apiIdentity.update).not.toHaveBeenCalled();
   });
 });

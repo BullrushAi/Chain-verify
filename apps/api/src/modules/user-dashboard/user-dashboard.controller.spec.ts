@@ -11,8 +11,14 @@ import { UserDashboardController } from './user-dashboard.controller.js';
  */
 function makeController() {
   const svc = {
+    getOverview: vi.fn().mockResolvedValue({ organization: { id: 'org-test' } }),
+    getScans: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
+    getApiKeys: vi.fn().mockResolvedValue([]),
     createApiKey: vi.fn().mockResolvedValue({ id: 'key-1', apiKey: 'cv_live_new', warning: 'w' }),
     revokeApiKey: vi.fn().mockResolvedValue({ id: 'key-1', active: false }),
+    getBilling: vi.fn().mockResolvedValue({ entitlements: [], usageThisMonth: [] }),
+    getOrganization: vi.fn().mockResolvedValue({ id: 'org-test' }),
+    getSettings: vi.fn().mockResolvedValue({ organization: { id: 'org-test' }, apiKeyCount: 0 }),
   };
   return { ctrl: new UserDashboardController(svc as never), svc };
 }
@@ -57,5 +63,50 @@ describe('UserDashboardController.revokeApiKey', () => {
     const result = await ctrl.revokeApiKey(EMAIL_REQ as never, 'key-1');
     expect(svc.revokeApiKey).toHaveBeenCalledWith('org-test', 'key-1');
     expect(result).toEqual({ id: 'key-1', active: false });
+  });
+});
+
+/**
+ * Tenant isolation (CBV fix round Task 1, Nov 8 2026). A fresh email sign-up
+ * whose email matches no paid org has organizationId null on the session.
+ * The controller must pass that null through to the service — never
+ * `undefined`, which Prisma would drop from the `where` filter and run
+ * unscoped. The service then returns empty / 404s instead of another org's
+ * data. The email below is a throwaway matching no intake.
+ */
+const NO_ORG_EMAIL_REQ = {
+  user: { id: 'user-1', organizationId: null, email: 'fresh-throwaway@example.com' },
+};
+const LEGACY_ORG_ID_REQ = { user: { id: 'key-1', orgId: 'org-test' } };
+
+describe('UserDashboardController no-org tenant isolation', () => {
+  it('passes null, never undefined, to the service for every read endpoint', async () => {
+    const { ctrl, svc } = makeController();
+    await ctrl.getOverview(NO_ORG_EMAIL_REQ as never);
+    expect(svc.getOverview).toHaveBeenCalledWith(null);
+    await ctrl.getScans(NO_ORG_EMAIL_REQ as never);
+    expect(svc.getScans).toHaveBeenCalledWith(null, undefined, undefined);
+    await ctrl.getApiKeys(NO_ORG_EMAIL_REQ as never);
+    expect(svc.getApiKeys).toHaveBeenCalledWith(null);
+    await ctrl.getBilling(NO_ORG_EMAIL_REQ as never);
+    expect(svc.getBilling).toHaveBeenCalledWith(null);
+    await ctrl.getOrganization(NO_ORG_EMAIL_REQ as never);
+    expect(svc.getOrganization).toHaveBeenCalledWith(null);
+    await ctrl.getSettings(NO_ORG_EMAIL_REQ as never);
+    expect(svc.getSettings).toHaveBeenCalledWith(null);
+  });
+
+  it('passes null to the service for key create / revoke from a no-org email session', async () => {
+    const { ctrl, svc } = makeController();
+    await ctrl.createApiKey(NO_ORG_EMAIL_REQ as never, { label: 'CI' });
+    expect(svc.createApiKey).toHaveBeenCalledWith(null, 'CI');
+    await ctrl.revokeApiKey(NO_ORG_EMAIL_REQ as never, 'key-1');
+    expect(svc.revokeApiKey).toHaveBeenCalledWith(null, 'key-1');
+  });
+
+  it('still honours the legacy orgId fallback for API-key identities', async () => {
+    const { ctrl, svc } = makeController();
+    await ctrl.getScans(LEGACY_ORG_ID_REQ as never);
+    expect(svc.getScans).toHaveBeenCalledWith('org-test', undefined, undefined);
   });
 });

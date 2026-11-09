@@ -18,6 +18,17 @@ function requireEmailSession(req: any) {
   }
 }
 
+/**
+ * The session's org, or null when the email sign-in has no org yet (a fresh
+ * sign-up whose email matches no paid org). Never `undefined`: Prisma drops
+ * undefined `where` filters, which would run the dashboard queries unscoped
+ * — that is how a no-org session saw another org's scans and keys (CBV fix
+ * round Task 1). The service treats null as "no data at all".
+ */
+function organizationIdOf(req: any): string | null {
+  return req.user?.organizationId || req.user?.orgId || null;
+}
+
 @Controller('user-dashboard')
 @UseGuards(JwtAuthGuard)
 export class UserDashboardController {
@@ -25,51 +36,51 @@ export class UserDashboardController {
 
   @Get('overview')
   getOverview(@Req() req: any) {
-    const orgId = req.user?.organizationId || req.user?.orgId;
+    const orgId = organizationIdOf(req);
     return this.svc.getOverview(orgId);
   }
 
   @Get('scans')
   getScans(@Req() req: any, @Query('limit') limit?: string, @Query('cursor') cursor?: string) {
-    const orgId = req.user?.organizationId || req.user?.orgId;
+    const orgId = organizationIdOf(req);
     return this.svc.getScans(orgId, limit ? Number(limit) : undefined, cursor);
   }
 
   @Get('api-keys')
   getApiKeys(@Req() req: any) {
-    const orgId = req.user?.organizationId || req.user?.orgId;
+    const orgId = organizationIdOf(req);
     return this.svc.getApiKeys(orgId);
   }
 
   @Post('api-keys')
   createApiKey(@Req() req: any, @Body() body: CreateCustomerApiKeyBody) {
-    const orgId = req.user?.organizationId || req.user?.orgId;
+    const orgId = organizationIdOf(req);
     requireEmailSession(req);
     return this.svc.createApiKey(orgId, body?.label ?? '');
   }
 
   @Delete('api-keys/:apiIdentityId')
   revokeApiKey(@Req() req: any, @Param('apiIdentityId') apiIdentityId: string) {
-    const orgId = req.user?.organizationId || req.user?.orgId;
+    const orgId = organizationIdOf(req);
     requireEmailSession(req);
     return this.svc.revokeApiKey(orgId, apiIdentityId);
   }
 
   @Get('billing')
   getBilling(@Req() req: any) {
-    const orgId = req.user?.organizationId || req.user?.orgId;
+    const orgId = organizationIdOf(req);
     return this.svc.getBilling(orgId);
   }
 
   @Get('organization')
   getOrganization(@Req() req: any) {
-    const orgId = req.user?.organizationId || req.user?.orgId;
+    const orgId = organizationIdOf(req);
     return this.svc.getOrganization(orgId);
   }
 
   @Get('settings')
   getSettings(@Req() req: any) {
-    const orgId = req.user?.organizationId || req.user?.orgId;
+    const orgId = organizationIdOf(req);
     return this.svc.getSettings(orgId);
   }
 }
