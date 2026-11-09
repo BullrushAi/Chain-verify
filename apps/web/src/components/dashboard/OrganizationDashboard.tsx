@@ -17,17 +17,30 @@ export function OrganizationDashboard() {
   const { apiKey, signOut } = useInvoiceProofSession();
   const [org, setOrg] = useState<Organization | null>(null);
   const [apiKeyCount, setApiKeyCount] = useState<number | null>(null);
+  /** True when the session has no org: the page renders an empty state, not an error. */
+  const [noOrg, setNoOrg] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     try {
       setLoading(true);
+      setNoOrg(false);
       const res = await fetch('/api/proxy/user-dashboard/organization', {
         headers: { 'x-chain-verify-api-key': apiKey },
       });
       if (res.status === 401) {
         signOut('Session expired');
+        return;
+      }
+      // A fresh email sign-up has no org: the API answers organization with
+      // 404 ('Organization not found', Task 1 contract). That is an empty
+      // state, not an error. The settings fetch is skipped: it would 404
+      // for the same reason (it is already guarded by its .ok check too).
+      if (res.status === 404) {
+        setOrg(null);
+        setNoOrg(true);
+        setError(null);
         return;
       }
       if (!res.ok) throw new Error('Failed to load organization');
@@ -59,6 +72,7 @@ export function OrganizationDashboard() {
 
   if (loading) return (<div className='ipa-stack'><DashboardNav current='organization' /><div className='ipa-panel'><p className='ipa-muted'>Loading organization...</p></div></div>);
   if (error) return (<div className='ipa-stack'><DashboardNav current='organization' /><div className='ipa-panel'><p className='ipa-error'>{error}</p><button className='ipa-btn ipa-btn-secondary' onClick={() => void load()}>Retry</button></div></div>);
+  if (noOrg) return (<div className='ipa-stack'><DashboardNav current='organization' /><header className='ipa-panel'><h1 className='ipa-h1'>Organization / Team</h1><p className='ipa-sub'>No organization linked to this account yet.</p></header><section className='ipa-panel'><p className='ipa-muted'>Once your email is linked to an organization, its details will appear here.</p></section></div>);
   if (!org) return null;
 
   return (

@@ -6,7 +6,8 @@ import { useInvoiceProofSession } from '@/components/invoice-proof/useInvoicePro
 import { DashboardNav } from './DashboardNav';
 
 interface Overview {
-  organization: { id: string; name: string; slug: string; createdAt: string };
+  /** Null for a fresh email sign-up whose account has no org yet (API answers overview with 404). */
+  organization: { id: string; name: string; slug: string; createdAt: string } | null;
   activeApiKeyCount: number;
   verificationRunsThisMonth: number;
   /** Scans in a state that needs a human look (FAILED + NEEDS_REVIEW). Undefined on older APIs. */
@@ -36,6 +37,22 @@ export function UserDashboard() {
         signOut('Session expired');
         return;
       }
+      // A fresh email sign-up has no org: the API answers overview with 404
+      // ('Organization not found', Task 1 contract). That is an empty
+      // dashboard, not an error — zero counts, no org, no scans yet. The
+      // billing fetch is skipped too: it would only return empty anyway.
+      if (res.status === 404) {
+        setOverview({
+          organization: null,
+          activeApiKeyCount: 0,
+          verificationRunsThisMonth: 0,
+          scansNeedingReview: 0,
+          recentRuns: [],
+        });
+        setBilling(null);
+        setError(null);
+        return;
+      }
       if (!res.ok) throw new Error('Failed to load dashboard');
       setOverview(await res.json());
       setError(null);
@@ -61,7 +78,7 @@ export function UserDashboard() {
 
   return (
     <div className='ipa-stack'>
-      <DashboardNav orgName={overview?.organization.name} current='dashboard' />
+      <DashboardNav orgName={overview?.organization?.name} current='dashboard' />
       {loading ? (
         <div className='ipa-panel'><p className='ipa-muted'>Loading dashboard...</p></div>
       ) : error ? (
@@ -71,7 +88,7 @@ export function UserDashboard() {
           <header className='ipa-panel'>
             <div>
               <h1 className='ipa-h1'>Dashboard</h1>
-              <p className='ipa-sub'>{overview.organization.name} ({overview.organization.slug})</p>
+              <p className='ipa-sub'>{overview.organization ? `${overview.organization.name} (${overview.organization.slug})` : 'No organization linked to this account yet.'}</p>
             </div>
           </header>
 
