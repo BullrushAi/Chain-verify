@@ -1,4 +1,5 @@
 import { isUsable } from './field-value.js';
+import { isDuplicateEligible } from './duplicate-guard.js';
 import {
   normalizeInvoice,
   normalizeMany,
@@ -229,6 +230,8 @@ export function scanInvoices(
   {
     const batchSeen = new Map<string, Row>();
     for (const r of rows) {
+      // A blank invoice number or a zero amount can never be a duplicate match.
+      if (!isDuplicateEligible(r.invoiceNo, r.amount)) continue;
       const key = r.invoiceNo.toLowerCase();
       const prev = batchSeen.get(key);
       if (prev) {
@@ -273,6 +276,12 @@ export function scanInvoices(
     for (const r of rows) {
       const prev = histByInvoiceNo.get(r.invoiceNo.toLowerCase());
       if (!prev) continue;
+      // Both sides of the match need a real invoice number and a real amount.
+      if (
+        !isDuplicateEligible(r.invoiceNo, r.amount) ||
+        !isDuplicateEligible(prev.invoiceNo, prev.amount)
+      )
+        continue;
 
       const prevDate =
         prev.submittedAt instanceof Date
@@ -319,6 +328,12 @@ export function scanInvoices(
     for (const r of rows) {
       const seed = seedByInvoiceNo.get(r.invoiceNo.toLowerCase());
       if (!seed) continue;
+      // Both sides of the match need a real invoice number and a real amount.
+      if (
+        !isDuplicateEligible(r.invoiceNo, r.amount) ||
+        !isDuplicateEligible(seed.invoiceNo, seed.amount)
+      )
+        continue;
 
       const seedDate =
         seed.submittedAt instanceof Date ? seed.submittedAt : new Date(seed.submittedAt);
@@ -372,6 +387,8 @@ export function scanInvoices(
   // Suppress for invoices that are part of a standing order (C-2).
   const byKey = new Map<string, Row[]>();
   rows.forEach((r) => {
+    // A row with no invoice number or a zero amount can never be a duplicate.
+    if (!isDuplicateEligible(r.invoiceNo, r.amount)) return;
     const k = `${r.vendor.toLowerCase()}|${r.amount}`;
     byKey.set(k, [...(byKey.get(k) || []), r]);
   });

@@ -31,6 +31,7 @@ import {
   type EvidenceInput,
   type ProofReport,
 } from '@chain-verify/proof-core';
+import { isDuplicateEligible } from '@chain-verify/proof-core/duplicate-guard.js';
 import type { Prisma } from '@prisma/client';
 import {
   ProofFinalDecision,
@@ -643,7 +644,7 @@ function evaluateInvoiceEvidence(output: Record<string, unknown>, evidence: unkn
     }
   };
 
-  const invoiceNo = String(output['invoice_number'] ?? output['invoice_no'] ?? '');
+  const invoiceNo = String(output['invoice_number'] ?? output['invoice_no'] ?? '').trim();
   const amount = asNumber(output['amount_total'] ?? output['total'] ?? output['invoice_total']);
   const priorInvoiceNo =
     firstEvidenceValue(evidenceOnly, [
@@ -696,6 +697,10 @@ function evaluateInvoiceEvidence(output: Record<string, unknown>, evidence: unkn
     alreadyPaid &&
     amount !== null &&
     priorAmount !== null &&
+    // A duplicate match requires a non-empty invoice number AND a non-zero
+    // amount on both sides — a $0.00 amount must never flag a duplicate.
+    isDuplicateEligible(invoiceNo, amount) &&
+    priorAmount !== 0 &&
     Math.abs(priorAmount - amount) < 0.01
   ) {
     push(
@@ -709,6 +714,10 @@ function evaluateInvoiceEvidence(output: Record<string, unknown>, evidence: unkn
     alreadyPaid &&
     priorAmount !== null &&
     amount !== null &&
+    // A duplicate match requires a non-empty invoice number AND a non-zero
+    // amount on both sides — a $0.00 amount must never flag a duplicate.
+    isDuplicateEligible(invoiceNo, amount) &&
+    priorAmount !== 0 &&
     Math.abs(priorAmount - amount) >= 0.01
   ) {
     push(
@@ -1536,14 +1545,21 @@ function evaluateStringRule(
           'duplicate_invoice',
           'is_duplicate',
         ]);
-      const invoiceNo = String(output['invoice_number'] ?? output['invoice_no'] ?? '');
+      const invoiceNo = String(output['invoice_number'] ?? output['invoice_no'] ?? '').trim();
+      const amount = asNumber(
+        output['amount_total'] ?? output['total'] ?? output['invoice_total'] ?? output['grand_total'],
+      );
+      // A duplicate match requires a non-empty invoice number AND a non-zero
+      // amount. A blank invoice number or a zero/missing amount must never
+      // flag a duplicate — not from a caller flag, and not from "already
+      // paid" / payment-register evidence text.
+      if (!isDuplicateEligible(invoiceNo, amount)) return null;
       const evidenceText = collectStringValues(evidence).join('\n');
       const escapedInvoiceNo = invoiceNo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const explicitDuplicate =
         /EXACT_DUPLICATE|MODIFIED_DUPLICATE|already paid|prior-payment-register/i.test(
           evidenceText,
-        ) &&
-        (!invoiceNo || new RegExp(escapedInvoiceNo, 'i').test(evidenceText));
+        ) && new RegExp(escapedInvoiceNo, 'i').test(evidenceText);
       if (
         duplicateSignal === true ||
         duplicateSignal === 'true' ||
@@ -1899,6 +1915,20 @@ function normalizeAiIssueSeverityForTask(
   issue: AiIssue,
 ): AiIssue | null {
   const issueText = `${issue.rule} ${issue.message}`;
+
+  // Deterministic post-filter for AI duplicate claims (Invoice Proof
+  // false-duplicate guard, Nov 9 2026): a duplicate match requires a
+  // non-empty invoice number AND a non-zero amount. Drop the issue when
+  // the submitted invoice has a blank number or a zero/missing amount.
+  if (/duplicate/i.test(issueText)) {
+    const aiOutput =
+      typeof output === 'object' && output !== null ? (output as Record<string, unknown>) : {};
+    const aiInvoiceNo = String(aiOutput['invoice_number'] ?? aiOutput['invoice_no'] ?? '').trim();
+    const aiAmount = asNumber(
+      aiOutput['amount_total'] ?? aiOutput['total'] ?? aiOutput['invoice_total'],
+    );
+    if (!isDuplicateEligible(aiInvoiceNo, aiAmount)) return null;
+  }
 
   if (
     task === 'invoice_extraction' &&

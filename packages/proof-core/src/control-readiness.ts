@@ -7,6 +7,7 @@
 // was checked, what failed, and what could not be evaluated.
 
 import { isUsable } from './field-value.js';
+import { isDuplicateEligible } from './duplicate-guard.js';
 import { normalizeVendorName } from './field-aliases.js';
 import type { NormalizedInvoice } from './normalizers/invoice-normalizer.js';
 
@@ -106,7 +107,12 @@ function invNo(inv: NormalizedInvoice): string {
 function c1ExactDuplicate(ctx: ControlContext): ControlResult {
   const id = 'IP-C1';
   const name = 'Exact duplicate (same invoice number + amount)';
-  const usable = ctx.invoices.filter((i) => isUsable(i.invoiceNo) && isUsable(i.amount));
+  const usable = ctx.invoices.filter(
+    (i) =>
+      isUsable(i.invoiceNo) &&
+      isUsable(i.amount) &&
+      isDuplicateEligible(i.invoiceNo.value, i.amount.value),
+  );
   if (usable.length === 0) {
     return {
       controlId: id,
@@ -145,7 +151,12 @@ function c1ExactDuplicate(ctx: ControlContext): ControlResult {
 function c2ModifiedDuplicate(ctx: ControlContext): ControlResult {
   const id = 'IP-C2';
   const name = 'Modified duplicate (same invoice number, different amount)';
-  const usable = ctx.invoices.filter((i) => isUsable(i.invoiceNo) && isUsable(i.amount));
+  const usable = ctx.invoices.filter(
+    (i) =>
+      isUsable(i.invoiceNo) &&
+      isUsable(i.amount) &&
+      isDuplicateEligible(i.invoiceNo.value, i.amount.value),
+  );
   if (usable.length === 0) {
     return {
       controlId: id,
@@ -194,7 +205,12 @@ function c3CrossSubmissionDuplicate(ctx: ControlContext): ControlResult {
         'No prior submission history or payment register provided — cannot check for resubmitted invoices.',
     };
   }
-  const usable = ctx.invoices.filter((i) => isUsable(i.invoiceNo) && isUsable(i.amount));
+  const usable = ctx.invoices.filter(
+    (i) =>
+      isUsable(i.invoiceNo) &&
+      isUsable(i.amount) &&
+      isDuplicateEligible(i.invoiceNo.value, i.amount.value),
+  );
   if (usable.length === 0) {
     return {
       controlId: id,
@@ -204,7 +220,11 @@ function c3CrossSubmissionDuplicate(ctx: ControlContext): ControlResult {
     };
   }
   const priorMap = new Map<string, number>();
-  for (const p of prior) priorMap.set(p.invoiceNo.toLowerCase(), p.amount);
+  for (const p of prior) {
+    // A prior record with no invoice number or a zero amount can never match.
+    if (!isDuplicateEligible(p.invoiceNo, p.amount)) continue;
+    priorMap.set(p.invoiceNo.toLowerCase(), p.amount);
+  }
   const hits: string[] = [];
   for (const inv of usable) {
     if (priorMap.has(inv.invoiceNo.value!.toLowerCase())) hits.push(inv.invoiceNo.value!);
