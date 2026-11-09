@@ -2219,6 +2219,18 @@ function mapSourceType(raw: string | undefined): ProofSourceType {
   return ProofSourceType.API_PUSH;
 }
 
+// Redact values that must never appear in logs, even if an AI-issued finding
+// echoes submitted text back: email addresses and sk-style API key tokens.
+// The verify-result log only ever carries rule/severity/message findings (the
+// same findings returned in the response body) — never the raw document/output
+// body — but a finding message could quote submitted text, so the composed log
+// line is scrubbed before it is written. (cbv-vlog1)
+function redactVerifyLogText(line: string): string {
+  return line
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email-redacted]')
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[api-key-redacted]');
+}
+
 // Derive a ProofRunStatus / string for the response from numeric confidence and issues.
 function deriveStatus(issues: unknown[]): ProofRunStatus {
   if (!issues || issues.length === 0) return ProofRunStatus.PASSED;
@@ -2332,6 +2344,41 @@ export class VerifyApiController {
     private readonly softwareDelivery: SoftwareDeliveryService,
     private readonly verifyApiUsage: VerifyApiUsageService,
   ) {}
+
+  // Verify-result logging (cbv-vlog1): ONE structured, greppable line per
+  // verification run, emitted for EVERY 200 answer — passed / needs_review /
+  // failed (and 'blocked' for a critical bank-account change) — on the main
+  // path, the audit_proof degraded path, and both software_delivery paths.
+  // The 503 LLM-unavailable path keeps its own error log and never calls
+  // this, so a fail-closed run is logged exactly once, as an error.
+  // PII-safe: only the run id, task, status, risk, confidence, issue count
+  // and the findings (rule/severity/message — the same findings returned in
+  // the response body) are logged. Never the raw document/output body, and
+  // the composed line is scrubbed for emails / key-like tokens first.
+  private logVerifyResult(
+    runId: string,
+    task: string,
+    status: string,
+    risk: string,
+    confidence: number,
+    issues: Array<{
+      rule?: string | null;
+      severity?: string | null;
+      message?: string | null;
+    }>,
+  ): void {
+    const findings =
+      issues.length === 0
+        ? 'none'
+        : issues
+            .map((i) => `[${i.rule ?? 'unknown'}|${i.severity ?? 'unknown'}] ${i.message ?? ''}`)
+            .join('; ');
+    this.logger.log(
+      redactVerifyLogText(
+        `Verification run ${runId} task=${task} status=${status} risk=${risk} confidence=${confidence} issues=${issues.length} findings=${findings}`,
+      ),
+    );
+  }
 
   // ---------------------------------------------------------------------------
   // POST /api/verify
@@ -2866,6 +2913,16 @@ export class VerifyApiController {
         );
         const sdDocChainHash = sdDocProof.chain_hash ?? null;
 
+        // cbv-vlog1: log the answer (same values as the response below).
+        this.logVerifyResult(
+          sdDocRun.id,
+          'software_delivery',
+          sdDocStatus,
+          sdDocRisk,
+          Math.round(sdDocConfidence * 100) / 100,
+          dedupedSdDocIssues,
+        );
+
         return {
           status: sdDocStatus,
           verification_status: sdDocStatus,
@@ -2922,6 +2979,8 @@ export class VerifyApiController {
       const demoCacheKey = user ? null : demoSoftwareDeliveryCacheKey(outputAsObj);
       if (demoCacheKey) {
         const cached = getDemoSoftwareDeliveryCache(demoCacheKey);
+        // Cache hit: same run as the original call, which was already logged
+        // (cbv-vlog1) when first computed — do not log the same run twice.
         if (cached) return cached;
       }
 
@@ -3055,6 +3114,19 @@ export class VerifyApiController {
         input_received: true,
         checks_requested: requestedChecks,
       };
+      // cbv-vlog1: log the answer (same values as the response below).
+      this.logVerifyResult(
+        result.verificationId,
+        'software_delivery',
+        result.verificationStatus,
+        sdRiskLevel,
+        result.confidence,
+        result.issuesFound.map((i) => ({
+          rule: i.checkId,
+          severity: i.status === 'FAIL' ? 'critical' : i.status === 'WARNING' ? 'warning' : 'info',
+          message: i.detail ?? i.checkName,
+        })),
+      );
       if (demoCacheKey) setDemoSoftwareDeliveryCache(demoCacheKey, sdResponse);
       return sdResponse;
     }
@@ -3632,6 +3704,18 @@ export class VerifyApiController {
     }
 
     const apiStatus = isBlocked ? 'blocked' : statusToApi(finalStatus);
+    // cbv-vlog1: log the answer (same values as the response below). This
+    // fires on every 200 outcome of the main path — passed, needs_review,
+    // failed, blocked — including the audit_proof degraded path, which
+    // flows through here after its warn log.
+    this.logVerifyResult(
+      run.id,
+      body.task ?? body.source_type ?? 'unknown',
+      apiStatus,
+      completedRun.riskLevel.toLowerCase(),
+      normaliseConfidence(confidenceInt),
+      dedupedIssues,
+    );
     return {
       verification_id: run.id,
       proof_id: proof.id,
