@@ -1212,3 +1212,231 @@ describe('VerifyApiController pilot intake email normalization', () => {
     expect(create).not.toHaveBeenCalled();
   });
 });
+
+describe('VerifyApiController duplicate guard (blank invoice number / zero amount)', () => {
+  const duplicateIssues = (issues: Array<{ rule: string }>) =>
+    issues.filter(
+      (i) => i.rule === 'duplicate_invoice_check' || i.rule === 'modified_duplicate_invoice',
+    );
+
+  const paidRecord = (invoiceNo: string, amount: number) => [
+    {
+      payment_register_status: 'paid',
+      prior_invoice_number: invoiceNo,
+      paid_amount: amount,
+    },
+  ];
+
+  describe('evaluateInvoiceEvidence', () => {
+    it('(a) blank invoice number + $0.00 vs a $0.00 record is NOT a duplicate', () => {
+      const issues = verifyApiRuleTestHooks.evaluateInvoiceEvidence(
+        { invoice_number: '', amount_total: 0 },
+        paidRecord('', 0),
+      );
+      expect(duplicateIssues(issues)).toEqual([]);
+    });
+
+    it('(b) blank invoice number + non-zero amount vs a matching record is NOT a duplicate', () => {
+      const issues = verifyApiRuleTestHooks.evaluateInvoiceEvidence(
+        { invoice_number: '', amount_total: 12450 },
+        paidRecord('', 12450),
+      );
+      expect(duplicateIssues(issues)).toEqual([]);
+    });
+
+    it('(c) valid invoice number + $0.00 vs a $0.00 record is NOT a duplicate', () => {
+      const issues = verifyApiRuleTestHooks.evaluateInvoiceEvidence(
+        { invoice_number: 'INV-ZERO-001', amount_total: 0 },
+        paidRecord('INV-ZERO-001', 0),
+      );
+      expect(duplicateIssues(issues)).toEqual([]);
+    });
+
+    it('(d) valid invoice number + matching non-zero amount vs the same record IS still a duplicate', () => {
+      const issues = verifyApiRuleTestHooks.evaluateInvoiceEvidence(
+        { invoice_number: 'INV-REG-2409', amount_total: 12450 },
+        paidRecord('INV-REG-2409', 12450),
+      );
+      expect(issues).toEqual([
+        expect.objectContaining({ rule: 'duplicate_invoice_check', severity: 'critical' }),
+      ]);
+    });
+
+    it('(d) valid invoice number + changed non-zero amount vs the same record IS still a modified duplicate', () => {
+      const issues = verifyApiRuleTestHooks.evaluateInvoiceEvidence(
+        { invoice_number: 'INV-MOD-2410', amount_total: 12890 },
+        paidRecord('INV-MOD-2410', 12450),
+      );
+      expect(issues).toEqual([
+        expect.objectContaining({ rule: 'modified_duplicate_invoice', severity: 'critical' }),
+      ]);
+    });
+
+    it('(e) the run14 shape (all fields blank, $0.00, payment-register evidence) is NOT a duplicate', () => {
+      const issues = verifyApiRuleTestHooks.evaluateInvoiceEvidence(
+        { vendor_name: '', invoice_number: '', amount_total: 0 },
+        ['Invoice matches payment register record from 2026-11-06 at identical amount $0.00'],
+      );
+      expect(duplicateIssues(issues)).toEqual([]);
+      expect(issues.map((i) => i.message).join('\n')).not.toContain('already paid on 2026-11-06');
+    });
+  });
+
+  describe('evaluateStringRule duplicate_invoice_check', () => {
+    it('(a) a caller duplicate flag with a blank invoice number + $0.00 does NOT fire', () => {
+      expect(
+        verifyApiRuleTestHooks.evaluateStringRule(
+          'duplicate_invoice_check',
+          { invoice_number: '', amount_total: 0, flag_duplicate_invoice: true },
+          ['Invoice matches payment register record from 2026-11-06 at identical amount $0.00'],
+          'invoice_extraction',
+        ),
+      ).toBeNull();
+    });
+
+    it('(b) a caller duplicate flag with a blank invoice number + non-zero amount does NOT fire', () => {
+      expect(
+        verifyApiRuleTestHooks.evaluateStringRule(
+          'duplicate_invoice_check',
+          { invoice_number: '', amount_total: 12450, flag_duplicate_invoice: true },
+          [],
+          'invoice_extraction',
+        ),
+      ).toBeNull();
+    });
+
+    it('(c) a caller duplicate flag with a valid invoice number + $0.00 does NOT fire', () => {
+      expect(
+        verifyApiRuleTestHooks.evaluateStringRule(
+          'duplicate_invoice_check',
+          { invoice_number: 'INV-ZERO-001', amount_total: 0, flag_duplicate_invoice: true },
+          [],
+          'invoice_extraction',
+        ),
+      ).toBeNull();
+    });
+
+    it('(d) a caller duplicate flag with a valid invoice number + non-zero amount DOES fire', () => {
+      expect(
+        verifyApiRuleTestHooks.evaluateStringRule(
+          'duplicate_invoice_check',
+          { invoice_number: 'INV-REG-2409', amount_total: 12450, flag_duplicate_invoice: true },
+          [],
+          'invoice_extraction',
+        ),
+      ).toEqual(
+        expect.objectContaining({ rule: 'duplicate_invoice_check', severity: 'critical' }),
+      );
+    });
+
+    it('payment-register evidence text naming the invoice DOES fire for a valid non-zero invoice', () => {
+      expect(
+        verifyApiRuleTestHooks.evaluateStringRule(
+          'duplicate_invoice_check',
+          { invoice_number: 'INV-REG-2409', amount_total: 12450 },
+          ['EXACT_DUPLICATE: Invoice INV-REG-2409 for $12,450.00 was already paid on 2026-11-06.'],
+          'invoice_extraction',
+        ),
+      ).toEqual(
+        expect.objectContaining({ rule: 'duplicate_invoice_check', severity: 'critical' }),
+      );
+    });
+
+    it('(e) the stored run14 finding text does NOT fire for the blank $0.00 invoice', () => {
+      // Before the guard, a blank invoice number made `!invoiceNo` true, so
+      // any "already paid" / payment-register mention fired this rule.
+      expect(
+        verifyApiRuleTestHooks.evaluateStringRule(
+          'duplicate_invoice_check',
+          { invoice_number: '', amount_total: 0 },
+          [
+            'EXACT_DUPLICATE: Invoice for $0.00 was already paid on 2026-11-06. Do not pay again.',
+            'Invoice matches payment register record from 2026-11-06 at identical amount $0.00',
+          ],
+          'invoice_extraction',
+        ),
+      ).toBeNull();
+    });
+
+    it('does NOT fire for a valid non-zero invoice with no duplicate signal', () => {
+      expect(
+        verifyApiRuleTestHooks.evaluateStringRule(
+          'duplicate_invoice_check',
+          { invoice_number: 'INV-REG-2409', amount_total: 12450 },
+          ['Payment register shows no prior payment for this invoice.'],
+          'invoice_extraction',
+        ),
+      ).toBeNull();
+    });
+  });
+
+  describe('normalizeAiIssueSeverityForTask AI duplicate post-filter', () => {
+    const run14Issue = {
+      rule: 'duplicate_invoice_check',
+      severity: 'critical' as const,
+      message: 'EXACT_DUPLICATE: Invoice for $0.00 was already paid on 2026-11-06. Do not pay again.',
+    };
+
+    it('(e) the run14 AI duplicate claim is dropped for the blank $0.00 invoice', () => {
+      expect(
+        verifyApiRuleTestHooks.normalizeAiIssueSeverityForTask(
+          'invoice_extraction',
+          { vendor_name: '', invoice_number: '', amount_total: 0 },
+          ['Invoice matches payment register record from 2026-11-06 at identical amount $0.00'],
+          run14Issue,
+        ),
+      ).toBeNull();
+    });
+
+    it('(a) an AI duplicate claim is dropped for a blank invoice number + $0.00', () => {
+      expect(
+        verifyApiRuleTestHooks.normalizeAiIssueSeverityForTask(
+          'invoice_extraction',
+          { invoice_number: '', amount_total: 0 },
+          [],
+          run14Issue,
+        ),
+      ).toBeNull();
+    });
+
+    it('(b) an AI duplicate claim is dropped for a blank invoice number + non-zero amount', () => {
+      expect(
+        verifyApiRuleTestHooks.normalizeAiIssueSeverityForTask(
+          'invoice_extraction',
+          { invoice_number: '', amount_total: 12450 },
+          [],
+          run14Issue,
+        ),
+      ).toBeNull();
+    });
+
+    it('(c) an AI duplicate claim is dropped for a valid invoice number + $0.00', () => {
+      expect(
+        verifyApiRuleTestHooks.normalizeAiIssueSeverityForTask(
+          'invoice_extraction',
+          { invoice_number: 'INV-ZERO-001', amount_total: 0 },
+          [],
+          run14Issue,
+        ),
+      ).toBeNull();
+    });
+
+    it('(d) a genuine AI duplicate claim is KEPT for a valid invoice number + non-zero amount', () => {
+      expect(
+        verifyApiRuleTestHooks.normalizeAiIssueSeverityForTask(
+          'invoice_extraction',
+          { invoice_number: 'INV-REG-2409', amount_total: 12450 },
+          [],
+          {
+            rule: 'duplicate_invoice_check',
+            severity: 'critical' as const,
+            message:
+              'EXACT_DUPLICATE: Invoice INV-REG-2409 for $12,450.00 was already paid on 2026-11-06. Do not pay again.',
+          },
+        ),
+      ).toEqual(
+        expect.objectContaining({ rule: 'duplicate_invoice_check', severity: 'critical' }),
+      );
+    });
+  });
+});
