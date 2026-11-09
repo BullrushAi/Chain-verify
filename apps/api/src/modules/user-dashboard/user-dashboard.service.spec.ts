@@ -102,6 +102,20 @@ function fakePrisma() {
           return rows.slice(0, args?.take ?? rows.length).map((row) => applySelect(row, args?.select));
         },
       ),
+      findFirst: vi.fn(
+        async (args: {
+          where?: { id?: string; orgId?: string };
+          select?: Record<string, boolean>;
+        }) => {
+          // Mirror real Prisma: an `undefined` org filter is dropped and
+          // the query runs unscoped. The service must never pass an
+          // undefined org id here (see the no-org tests below).
+          const scoped =
+            args?.where?.orgId === undefined ? runs : runs.filter((row) => row.orgId === args.where?.orgId);
+          const row = scoped.find((r) => r.id === args?.where?.id);
+          return row ? applySelect(row, args?.select) : null;
+        },
+      ),
       groupBy: vi.fn(async (args: { where?: { orgId?: string; createdAt?: unknown }; by?: string[] }) => {
         // Mirror real Prisma: an `undefined` org filter is dropped.
         const scoped =
@@ -445,5 +459,51 @@ describe('UserDashboardService no-org tenant isolation', () => {
     await expect(svc.revokeApiKey(null, 'key-other')).rejects.toThrow('Organization not found');
     expect(prisma.apiIdentity.create).not.toHaveBeenCalled();
     expect(prisma.apiIdentity.update).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('UserDashboardService.getScan', () => {
+  it('returns the caller orgs scan with the list field shape', async () => {
+    const { prisma, store, runs, entitlements } = fakePrisma();
+    seedOtherOrgData(store, runs, entitlements);
+    runs.push({
+      id: 'run-mine-1',
+      orgId: 'org-test',
+      product: 'invoice-proof',
+      sourceType: 'API',
+      status: 'FAILED',
+      riskLevel: 'HIGH',
+      inputSummary: 'my scan',
+      outputSummary: 'my result',
+      confidence: 0.9,
+      createdAt: new Date('2026-11-08T10:00:00.000Z'),
+      updatedAt: new Date('2026-11-08T10:00:00.000Z'),
+    });
+    const svc = new UserDashboardService(prisma as unknown as PrismaService);
+    const result = await svc.getScan('org-test', 'run-mine-1');
+    expect((result as any).id).toBe('run-mine-1');
+    expect((result as any).product).toBe('invoice-proof');
+    expect((result as any).outputSummary).toBe('my result');
+    expect(prisma.verificationRun.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'run-mine-1', orgId: 'org-test' } }),
+    );
+  });
+
+  it('404s for another orgs scan id and for an unknown id', async () => {
+    const { prisma, store, runs, entitlements } = fakePrisma();
+    seedOtherOrgData(store, runs, entitlements);
+    const svc = new UserDashboardService(prisma as unknown as PrismaService);
+    await expect(svc.getScan('org-test', 'run-other-1')).rejects.toThrow('Scan not found');
+    await expect(svc.getScan('org-test', 'run-missing')).rejects.toThrow('Scan not found');
+  });
+
+  it('rejects for a no-org session before any query', async () => {
+    const { prisma, store, runs, entitlements } = fakePrisma();
+    seedOtherOrgData(store, runs, entitlements);
+    const svc = new UserDashboardService(prisma as unknown as PrismaService);
+    await expect(svc.getScan(null, 'run-other-1')).rejects.toThrow('Organization not found');
+    await expect(svc.getScan(undefined, 'run-other-1')).rejects.toThrow('Organization not found');
+    expect(prisma.verificationRun.findFirst).not.toHaveBeenCalled();
   });
 });

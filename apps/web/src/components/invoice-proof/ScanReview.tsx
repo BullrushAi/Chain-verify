@@ -14,7 +14,7 @@ export interface ScanReviewProps {
 }
 
 export function ScanReview({ scanId }: ScanReviewProps) {
-  const { apiKey, signOut } = useInvoiceProofSession();
+  const { apiKey, authKind, signOut } = useInvoiceProofSession();
   const [review, setReview] = useState<ScanReviewPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -24,12 +24,26 @@ export function ScanReview({ scanId }: ScanReviewProps) {
   const handleError = useCallback(
     (err: unknown, fallback: string) => {
       if (err instanceof InvoiceProofApiError && (err.status === 401 || err.status === 403)) {
+        // This review endpoint takes an API key only. An email session has
+        // no key (apiKey is ''), so a 401/403 here says nothing about the
+        // email session — it must NOT sign the user out. The old code called
+        // signOut() unconditionally, and the gate's signOut posts
+        // /api/auth/logout, which deletes every session: that is how merely
+        // visiting this page from the dashboard destroyed the dashboard
+        // email session live (CBV fix round Task 3, Nov 8 2026). For an
+        // email session, show the error and keep the session; the dashboard
+        // detail page is the way in. API-key sessions keep the old
+        // behaviour: a rejected key signs out to the key gate.
+        if (authKind === 'email') {
+          setError('This review page signs in with an API key. Your email sign-in is still active — open the scan from your dashboard instead.');
+          return;
+        }
         signOut('That API key was not accepted. Check the key and try again.');
         return;
       }
       setError(errorMessage(err, fallback));
     },
-    [signOut],
+    [authKind, signOut],
   );
 
   useEffect(() => {
@@ -123,9 +137,15 @@ export function ScanReview({ scanId }: ScanReviewProps) {
         ))}
       </ul>
 
-      <Link href="/invoice-proof/dashboard" className="ipa-link">
-        Back to dashboard
-      </Link>
+      {authKind === 'email' ? (
+        <Link href={`/dashboard/scans/${scanId}`} className="ipa-link">
+          Open this scan in your dashboard
+        </Link>
+      ) : (
+        <Link href="/invoice-proof/dashboard" className="ipa-link">
+          Back to dashboard
+        </Link>
+      )}
     </>
   );
 }

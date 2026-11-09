@@ -146,7 +146,7 @@ export function UserDashboard() {
                         <td>{r.status}</td>
                         <td>{r.riskLevel}</td>
                         <td>{new Date(r.createdAt).toLocaleString()}</td>
-                        <td><Link className='ipa-link' href={`/invoice-proof/review/${r.id}`}>Review</Link></td>
+                        <td><Link className='ipa-link' href={`/dashboard/scans/${r.id}`}>Review</Link></td>
                       </tr>
                     ))}
                   </tbody>

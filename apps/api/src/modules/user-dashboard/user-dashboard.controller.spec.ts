@@ -13,6 +13,7 @@ function makeController() {
   const svc = {
     getOverview: vi.fn().mockResolvedValue({ organization: { id: 'org-test' } }),
     getScans: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
+    getScan: vi.fn().mockResolvedValue({ id: 'scan-1', product: 'invoice-proof' }),
     getApiKeys: vi.fn().mockResolvedValue([]),
     createApiKey: vi.fn().mockResolvedValue({ id: 'key-1', apiKey: 'cv_live_new', warning: 'w' }),
     revokeApiKey: vi.fn().mockResolvedValue({ id: 'key-1', active: false }),
@@ -108,5 +109,27 @@ describe('UserDashboardController no-org tenant isolation', () => {
     const { ctrl, svc } = makeController();
     await ctrl.getScans(LEGACY_ORG_ID_REQ as never);
     expect(svc.getScans).toHaveBeenCalledWith('org-test', undefined, undefined);
+  });
+});
+
+
+/**
+ * Task 3: the in-dashboard scan detail page reads one scan through
+ * GET user-dashboard/scans/:id. The controller passes the session org
+ * (null for a no-org email sign-up, never undefined) and the id through
+ * to the service, which scopes the query to that org.
+ */
+describe('UserDashboardController.getScan', () => {
+  it('reads one scan, scoped to the session org', async () => {
+    const { ctrl, svc } = makeController();
+    const result = await ctrl.getScan(EMAIL_REQ as never, 'scan-1');
+    expect(svc.getScan).toHaveBeenCalledWith('org-test', 'scan-1');
+    expect(result).toEqual({ id: 'scan-1', product: 'invoice-proof' });
+  });
+
+  it('passes null, never undefined, for a no-org email session', async () => {
+    const { ctrl, svc } = makeController();
+    await ctrl.getScan(NO_ORG_EMAIL_REQ as never, 'scan-1');
+    expect(svc.getScan).toHaveBeenCalledWith(null, 'scan-1');
   });
 });

@@ -109,7 +109,7 @@ export function ScansDashboard() {
                     <td>{s.confidence === null ? '—' : s.confidence}</td>
                     <td>{s.outputSummary || s.inputSummary}</td>
                     <td>{new Date(s.createdAt).toLocaleString()}</td>
-                    <td><Link className='ipa-link' href={`/invoice-proof/review/${s.id}`}>Review</Link></td>
+                    <td><Link className='ipa-link' href={`/dashboard/scans/${s.id}`}>Review</Link></td>
                   </tr>
                 ))}
               </tbody>

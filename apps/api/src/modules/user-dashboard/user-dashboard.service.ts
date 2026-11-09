@@ -12,6 +12,24 @@ const API_IDENTITY_SAFE_SELECT = {
   updatedAt: true,
 } as const;
 
+/**
+ * The scan fields the dashboard list and the dashboard detail page show.
+ * One select for both, so the detail page can never leak a field the list
+ * hides (and vice versa). No proof payload, no raw input, no key material.
+ */
+const SCAN_SELECT = {
+  id: true,
+  product: true,
+  sourceType: true,
+  status: true,
+  riskLevel: true,
+  inputSummary: true,
+  outputSummary: true,
+  confidence: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
 /** A session's org id, which is missing for a fresh email sign-up whose
  * email matches no paid org (see CustomerAuthService.resolveOrganizationId).
  */
@@ -78,22 +96,27 @@ export class UserDashboardService {
       orderBy: { createdAt: 'desc' },
       take: take + 1,
       ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
-      select: {
-        id: true,
-        product: true,
-        sourceType: true,
-        status: true,
-        riskLevel: true,
-        inputSummary: true,
-        outputSummary: true,
-        confidence: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: SCAN_SELECT,
     });
     const hasMore = rows.length > take;
     const items = hasMore ? rows.slice(0, take) : rows;
     return { items, nextCursor: hasMore ? items[items.length - 1]?.id : null };
+  }
+
+  /**
+   * One scan for the in-dashboard detail page (CBV fix round Task 3,
+   * Nov 8 2026). Scoped to the caller's org in the query itself: another
+   * org's scan id is a 404, never a cross-tenant read. A no-org session
+   * 404s before any query runs (same contract as getOrganization).
+   */
+  async getScan(organizationId: OrganizationId, scanId: string) {
+    const orgId = requireOrganizationId(organizationId);
+    const row = await this.prisma.verificationRun.findFirst({
+      where: { id: scanId, orgId },
+      select: SCAN_SELECT,
+    });
+    if (!row) throw new NotFoundException('Scan not found');
+    return row;
   }
 
   async getApiKeys(organizationId: OrganizationId) {

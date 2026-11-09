@@ -89,6 +89,15 @@ describe('dashboardUrl', () => {
       );
     }
   });
+
+  it('builds a single-scan suffix for the dashboard detail page (Task 3)', () => {
+    expect(dashboardUrl(CANONICAL_API_ORIGIN, 'scans/scan-123')).toBe(
+      `${CANONICAL_API_ORIGIN}/api/user-dashboard/scans/scan-123`,
+    );
+    expect(dashboardUrl('', 'scans/scan-123')).toBe(
+      'http://localhost:3001/api/user-dashboard/scans/scan-123',
+    );
+  });
 });
 
 describe('public API base', () => {

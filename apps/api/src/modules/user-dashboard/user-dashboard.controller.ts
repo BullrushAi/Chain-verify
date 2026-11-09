@@ -46,6 +46,12 @@ export class UserDashboardController {
     return this.svc.getScans(orgId, limit ? Number(limit) : undefined, cursor);
   }
 
+  @Get('scans/:id')
+  getScan(@Req() req: any, @Param('id') id: string) {
+    const orgId = organizationIdOf(req);
+    return this.svc.getScan(orgId, id);
+  }
+
   @Get('api-keys')
   getApiKeys(@Req() req: any) {
     const orgId = organizationIdOf(req);

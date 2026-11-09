@@ -75,7 +75,11 @@ describe('Task 2 — shared dashboard navigation', () => {
 
   it('scan rows link into the scan detail page', () => {
     for (const name of ['UserDashboard.tsx', 'ScansDashboard.tsx']) {
-      expect(readComponent(name)).toContain('/invoice-proof/review/${');
+      expect(readComponent(name)).toContain('/dashboard/scans/${');
+      // The dashboard never links out to the vendor review page: for an
+      // email session that page 401s on the empty API key and signs the
+      // user out, destroying the dashboard session (Task 3, Nov 8 2026).
+      expect(readComponent(name)).not.toContain('/invoice-proof/review/');
     }
   });
 

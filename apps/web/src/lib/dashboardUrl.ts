@@ -11,6 +11,7 @@ const STALE_API_HOSTS = new Set([
 export type UserDashboardRoute =
   | 'overview'
   | 'scans'
+  | `scans/${string}`
   | 'api-keys'
   | 'billing'
   | 'organization'
