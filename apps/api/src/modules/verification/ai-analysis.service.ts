@@ -313,10 +313,14 @@ interface ProviderCallResult {
   ok: boolean;
   result?: AiAnalysisResult;
   status?: number;
+  /** Short failure reason (e.g. 'http-429', 'SyntaxError', 'TypeError') for fallback logging. */
+  reason?: string;
 }
 
 const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
+const GEMINI_GENERATE_URL =
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
 /**
  * Request headers for the Messages API. An API key that is not tied to a single
@@ -345,6 +349,20 @@ function parseAiResponseBody(data: unknown): AiAnalysisResult {
   const text = (data as { content?: Array<{ type?: string; text?: string }> }).content?.find(
     (block) => block.type === 'text',
   )?.text ?? '{}';
+  return parseAiResponseText(text);
+}
+
+// Gemini response shape: { candidates: [{ content: { parts: [{ text }] } }] }.
+// The extracted text is validated with the SAME JSON validation as the Anthropic path.
+function parseGeminiResponseBody(data: unknown): AiAnalysisResult {
+  const text =
+    (data as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }).candidates?.[0]?.content?.parts?.find(
+      (part) => typeof part.text === 'string',
+    )?.text ?? '{}';
+  return parseAiResponseText(text);
+}
+
+function parseAiResponseText(text: string): AiAnalysisResult {
   const parsed = (JSON.parse(stripJsonFence(text)) as Partial<AiAnalysisResult>) ?? {};
 
   const issues: AiIssue[] = (parsed.issues ?? [])
@@ -388,27 +406,62 @@ export class AiAnalysisService {
   private readonly workspaceId = process.env['ANTHROPIC_WORKSPACE_ID']?.trim() ?? '';
   private readonly model = process.env['ANTHROPIC_MODEL'] ?? 'claude-sonnet-4-5-20250929';
   private readonly maxTokens = 1200;
+  // Gemini-direct primary key (POST to generativelanguage.googleapis.com).
+  private readonly geminiApiKey = process.env['GEMINI_API_KEY']?.trim() ?? '';
 
   isConfigured(): boolean {
-    return this.apiKey.length > 0;
+    return this.apiKey.length > 0 || this.geminiApiKey.length > 0;
   }
 
   async analyze(task: string | undefined, output: unknown): Promise<AiAnalysisResult> {
     if (!this.isConfigured()) {
-      // Fail-closed: no Anthropic key configured means we cannot verify —
+      // Fail-closed: no LLM key configured means we cannot verify —
       // return AI_UNAVAILABLE so the controller returns 503 rather than a false-pass
       // (PRB-LLM-FAIL-OPEN).
-      this.logger.error('ANTHROPIC_API_KEY is not set — AI analysis unavailable (fail-closed).');
+      this.logger.error('No LLM API key is set — AI analysis unavailable (fail-closed).');
       return AI_UNAVAILABLE;
     }
 
-    const result = await this.callAnthropic(buildUserPrompt(task, output));
-    if (result.ok && result.result) {
-      this.logger.log('AI analysis succeeded via provider=anthropic-direct');
-      return result.result;
+    const userPrompt = buildUserPrompt(task, output);
+
+    if (this.geminiApiKey.length > 0) {
+      const gemini = await this.callGemini(userPrompt);
+      if (gemini.ok && gemini.result) {
+        this.logger.log('AI analysis succeeded via provider=gemini-direct');
+        return gemini.result;
+      }
+
+      if (this.apiKey.length === 0) {
+        // No fallback configured — behave exactly as the single-provider path did.
+        this.logger.error('AI analysis failed — returning AI_UNAVAILABLE (fail-closed)');
+        return AI_UNAVAILABLE;
+      }
+
+      this.logger.warn(
+        `Gemini AI analysis failed (${gemini.reason ?? 'unknown'}) — falling back to Anthropic.`,
+      );
+      const anthropic = await this.callAnthropic(userPrompt);
+      if (anthropic.ok && anthropic.result) {
+        this.logger.log('AI analysis succeeded via provider=anthropic-direct');
+        return anthropic.result;
+      }
+
+      this.logger.error(
+        `AI analysis failed on both providers (gemini: ${gemini.reason ?? 'unknown'}; anthropic: ${anthropic.reason ?? 'unknown'}) — returning AI_UNAVAILABLE (fail-closed)`,
+      );
+      return AI_UNAVAILABLE;
     }
 
-    this.logger.error('AI analysis failed — returning AI_UNAVAILABLE (fail-closed)');
+    // No Gemini key configured — try Anthropic directly.
+    const anthropic = await this.callAnthropic(userPrompt);
+    if (anthropic.ok && anthropic.result) {
+      this.logger.log('AI analysis succeeded via provider=anthropic-direct');
+      return anthropic.result;
+    }
+
+    this.logger.error(
+      `Anthropic AI analysis failed (${anthropic.reason ?? 'unknown'}) — returning AI_UNAVAILABLE (fail-closed)`,
+    );
     return AI_UNAVAILABLE;
   }
 
@@ -429,7 +482,7 @@ export class AiAnalysisService {
       if (!res.ok) {
         const body = await res.text();
         this.logger.error(`anthropic-direct AI analysis error ${res.status}: ${body.slice(0, 300)}`);
-        return { ok: false, result: undefined, status: res.status };
+        return { ok: false, result: undefined, status: res.status, reason: `http-${res.status}` };
       }
 
       const data = await res.json();
@@ -437,7 +490,48 @@ export class AiAnalysisService {
       return { ok: true, result, status: res.status };
     } catch (err) {
       this.logger.error(`anthropic-direct AI analysis request failed: ${String(err)}`);
-      return { ok: false, result: undefined, status: undefined };
+      return {
+        ok: false,
+        result: undefined,
+        status: undefined,
+        reason: err instanceof Error ? err.name : 'unknown-error',
+      };
+    }
+  }
+
+  private async callGemini(userPrompt: string): Promise<ProviderCallResult> {
+    try {
+      const res = await fetch(GEMINI_GENERATE_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': this.geminiApiKey,
+        },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+          generationConfig: { maxOutputTokens: this.maxTokens, responseMimeType: 'application/json' },
+        }),
+        signal: AbortSignal.timeout(15_000),
+      });
+
+      if (!res.ok) {
+        const body = await res.text();
+        this.logger.error(`gemini-direct AI analysis error ${res.status}: ${body.slice(0, 300)}`);
+        return { ok: false, result: undefined, status: res.status, reason: `http-${res.status}` };
+      }
+
+      const data = await res.json();
+      const result = parseGeminiResponseBody(data);
+      return { ok: true, result, status: res.status };
+    } catch (err) {
+      this.logger.error(`gemini-direct AI analysis request failed: ${String(err)}`);
+      return {
+        ok: false,
+        result: undefined,
+        status: undefined,
+        reason: err instanceof Error ? err.name : 'unknown-error',
+      };
     }
   }
 }
