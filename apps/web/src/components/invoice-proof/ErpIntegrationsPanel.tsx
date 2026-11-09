@@ -26,19 +26,30 @@ const PROVIDERS: ProviderDef[] = [
 ];
 
 export function ErpIntegrationsPanel() {
-  const { apiKey, signOut } = useInvoiceProofSession();
+  const { apiKey, authKind, signOut } = useInvoiceProofSession();
   const [connections, setConnections] = useState<ErpConnection[]>([]);
   const [message, setMessage] = useState<string | null>(null);
 
   const handleError = useCallback(
     (err: unknown, fallback: string) => {
       if (err instanceof InvoiceProofApiError && (err.status === 401 || err.status === 403)) {
+        // This panel takes an API key only. An email session has no key
+        // (apiKey is ''), so a 401/403 here says nothing about the
+        // email session — it must NOT sign the user out. The gate's signOut
+        // posts /api/auth/logout, which deletes every session (CBV fix
+        // round Task 3b, Nov 8 2026). For an email session, show the error
+        // and keep the session. API-key sessions keep the old behaviour:
+        // a rejected key signs out to the key gate.
+        if (authKind === 'email') {
+          setMessage('This page signs in with an API key. Your email sign-in is still active — open your scans from your dashboard instead.');
+          return;
+        }
         signOut('That API key was not accepted. Check the key and try again.');
         return;
       }
       setMessage(errorMessage(err, fallback));
     },
-    [signOut],
+    [authKind, signOut],
   );
 
   useEffect(() => {
@@ -94,6 +105,12 @@ export function ErpIntegrationsPanel() {
         <p className="ipa-alert" role="status">
           {message}
         </p>
+      ) : null}
+
+      {authKind === 'email' && message ? (
+        <Link href="/dashboard/scans" className="ipa-link">
+          Open your scans in your dashboard
+        </Link>
       ) : null}
 
       <Link href="/invoice-proof/dashboard" className="ipa-link">

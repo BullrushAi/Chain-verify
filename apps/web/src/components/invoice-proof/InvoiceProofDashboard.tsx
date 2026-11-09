@@ -13,7 +13,7 @@ import { UsageMeter } from './UsageMeter';
 import { useInvoiceProofSession } from './useInvoiceProofSession';
 
 export function InvoiceProofDashboard() {
-  const { apiKey, signOut } = useInvoiceProofSession();
+  const { apiKey, authKind, signOut } = useInvoiceProofSession();
   const [scans, setScans] = useState<ScanSummary[]>([]);
   const [usage, setUsage] = useState<InvoiceProofUsage | null>(null);
   const [proofs, setProofs] = useState<ProofRecordSummary[]>([]);
@@ -34,6 +34,19 @@ export function InvoiceProofDashboard() {
       setProofs(nextProofs);
     } catch (err) {
       if (err instanceof InvoiceProofApiError && (err.status === 401 || err.status === 403)) {
+        // This dashboard takes an API key only. An email session has no
+        // key (apiKey is ''), so a 401/403 here says nothing about the
+        // email session — it must NOT sign the user out. The gate's signOut
+        // posts /api/auth/logout, which deletes every session: that is how
+        // merely opening this page from the dashboard destroyed the
+        // dashboard email session live (CBV fix round Task 3b, Nov 8 2026).
+        // For an email session, show the error and keep the session; the
+        // dashboard is the way in. API-key sessions keep the old
+        // behaviour: a rejected key signs out to the key gate.
+        if (authKind === 'email') {
+          setError('This page signs in with an API key. Your email sign-in is still active — open your scans from your dashboard instead.');
+          return;
+        }
         signOut('That API key was not accepted. Check the key and try again.');
         return;
       }
@@ -41,7 +54,7 @@ export function InvoiceProofDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [apiKey, signOut]);
+  }, [apiKey, authKind, signOut]);
 
   useEffect(() => {
     void load();
@@ -75,6 +88,12 @@ export function InvoiceProofDashboard() {
         <p className="ipa-alert ipa-alert-error" role="alert">
           {error}
         </p>
+      ) : null}
+
+      {authKind === 'email' && error ? (
+        <Link href="/dashboard/scans" className="ipa-link">
+          Open your scans in your dashboard
+        </Link>
       ) : null}
 
       {usage ? <UsageMeter usage={usage} /> : null}
