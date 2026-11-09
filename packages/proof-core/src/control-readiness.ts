@@ -833,7 +833,11 @@ function c15NearDuplicate(ctx: ControlContext): ControlResult {
   const id = 'IP-C15';
   const name = 'Near duplicate (same vendor + same amount)';
   const usable = ctx.invoices.filter(
-    (i) => isUsable(i.vendor) && isUsable(i.amount) && isUsable(i.invoiceNo),
+    (i) =>
+      isUsable(i.vendor) &&
+      isUsable(i.amount) &&
+      isUsable(i.invoiceNo) &&
+      isDuplicateEligible(i.invoiceNo.value, i.amount.value),
   );
   if (usable.length === 0) {
     return {
