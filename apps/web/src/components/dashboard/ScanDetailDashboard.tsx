@@ -16,6 +16,46 @@ interface Scan {
   confidence: number | null;
   createdAt: string;
   updatedAt: string;
+  /** Stored findings (VerificationRun.issuesFound). Optional: older API builds omit it. */
+  issuesFound?: DashboardFinding[] | null;
+}
+
+/**
+ * One stored finding, as written to VerificationRun.issuesFound. Two shapes
+ * exist: the invoice-proof scan writes proof-core findings
+ * ({severity, pattern, detail, rows, evidence}); the /verify path writes
+ * rule issues ({rule, severity, message, recommended_action,
+ * source_passage}). Both render the same way — a title, a detail line, and
+ * whatever supporting fields are present. A non-object entry renders as its
+ * string form rather than crashing the page.
+ */
+interface DashboardFinding {
+  severity?: string;
+  pattern?: string;
+  detail?: string;
+  rows?: string[];
+  evidence?: string;
+  rule?: string;
+  message?: string;
+  recommended_action?: string;
+  source_passage?: string;
+}
+
+function findingTitle(f: DashboardFinding): string {
+  return f.pattern ?? f.rule ?? 'Finding';
+}
+
+function findingDetail(f: DashboardFinding): string {
+  return f.detail ?? f.message ?? '';
+}
+
+function normalizeFindings(raw: unknown): DashboardFinding[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item) => {
+    if (typeof item === 'string') return [{ detail: item }];
+    if (item && typeof item === 'object') return [item as DashboardFinding];
+    return [];
+  });
 }
 
 /**
@@ -75,6 +115,8 @@ export function ScanDetailDashboard({ scanId }: { scanId: string }) {
   if (error) return (<div className='ipa-stack'><DashboardNav current='scans' /><div className='ipa-panel'><p className='ipa-error'>{error}</p><button className='ipa-btn ipa-btn-secondary' onClick={() => void load()}>Retry</button><p style={{ marginTop: '12px' }}><Link className='ipa-link' href='/dashboard/scans'>Back to scans</Link></p></div></div>);
   if (notFound || !scan) return (<div className='ipa-stack'><DashboardNav current='scans' /><div className='ipa-panel'><h1 className='ipa-h1'>Scan not found</h1><p className='ipa-muted'>This scan doesn&apos;t exist, or it belongs to a different organization.</p><p style={{ marginTop: '12px' }}><Link className='ipa-link' href='/dashboard/scans'>Back to scans</Link></p></div></div>);
 
+  const findings = normalizeFindings(scan.issuesFound);
+
   return (
     <div className='ipa-stack'>
       <DashboardNav current='scans' />
@@ -100,6 +142,26 @@ export function ScanDetailDashboard({ scanId }: { scanId: string }) {
           </table>
         </div>
         <p style={{ marginTop: '12px' }}><Link className='ipa-link' href='/dashboard/scans'>Back to scans</Link></p>
+      </section>
+
+      <section className='ipa-panel'>
+        <h2 className='ipa-h2'>Findings ({findings.length})</h2>
+        {findings.length === 0 ? (
+          <p className='ipa-muted'>No individual findings recorded for this scan.</p>
+        ) : (
+          <div>
+            {findings.map((finding, i) => (
+              <div key={i} style={{ marginBottom: '16px' }}>
+                <p><strong>{findingTitle(finding)}</strong>{finding.severity ? ` — ${finding.severity}` : ''}</p>
+                {findingDetail(finding) ? <p>{findingDetail(finding)}</p> : null}
+                {finding.rows && finding.rows.length > 0 ? <p className='ipa-muted'>Invoices: {finding.rows.join(', ')}</p> : null}
+                {finding.evidence ? <p className='ipa-muted'>Evidence: {finding.evidence}</p> : null}
+                {finding.recommended_action ? <p className='ipa-muted'>Recommended action: {finding.recommended_action}</p> : null}
+                {finding.source_passage ? <p className='ipa-muted'>Source: {finding.source_passage}</p> : null}
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );

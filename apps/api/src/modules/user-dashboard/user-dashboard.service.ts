@@ -13,9 +13,9 @@ const API_IDENTITY_SAFE_SELECT = {
 } as const;
 
 /**
- * The scan fields the dashboard list and the dashboard detail page show.
- * One select for both, so the detail page can never leak a field the list
- * hides (and vice versa). No proof payload, no raw input, no key material.
+ * The scan fields the dashboard list shows. Kept light on purpose: the
+ * list never carries the finding payload. No proof payload, no raw input,
+ * no key material.
  */
 const SCAN_SELECT = {
   id: true,
@@ -28,6 +28,18 @@ const SCAN_SELECT = {
   confidence: true,
   createdAt: true,
   updatedAt: true,
+} as const;
+
+/**
+ * The detail page extends the list select with the stored findings
+ * (VerificationRun.issuesFound — the finding objects the scan wrote, with
+ * severity / pattern / detail / rows / evidence). No proof payload, no raw
+ * input, no key material: findings are the scan's own human-readable result.
+ * The list keeps SCAN_SELECT so list responses stay light.
+ */
+const SCAN_DETAIL_SELECT = {
+  ...SCAN_SELECT,
+  issuesFound: true,
 } as const;
 
 /** A session's org id, which is missing for a fresh email sign-up whose
@@ -113,7 +125,7 @@ export class UserDashboardService {
     const orgId = requireOrganizationId(organizationId);
     const row = await this.prisma.verificationRun.findFirst({
       where: { id: scanId, orgId },
-      select: SCAN_SELECT,
+      select: SCAN_DETAIL_SELECT,
     });
     if (!row) throw new NotFoundException('Scan not found');
     return row;

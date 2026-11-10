@@ -490,6 +490,67 @@ describe('UserDashboardService.getScan', () => {
     );
   });
 
+  it('returns the stored findings on the detail read (scan-detail fix)', async () => {
+    const { prisma, store, runs, entitlements } = fakePrisma();
+    seedOtherOrgData(store, runs, entitlements);
+    // Mirrors the live test scan's stored row: outputSummary carries the
+    // count ("1 finding(s), 0 critical") while issuesFound carries the
+    // finding text itself (proof-core Finding shape, as written by
+    // InvoiceProofService.createScanProofRecord).
+    const finding = {
+      severity: 'medium',
+      pattern: 'Missing / ghost PO',
+      detail: '1 invoice references no purchase order — unmatched spend that bypasses procurement control.',
+      rows: ['INV-0001'],
+      evidence: 'Invoices with no PO: INV-0001 ($0.00)',
+    };
+    runs.push({
+      id: 'run-mine-1',
+      orgId: 'org-test',
+      product: 'invoice-proof',
+      sourceType: 'API',
+      status: 'FAILED',
+      riskLevel: 'MEDIUM',
+      inputSummary: 'my scan',
+      outputSummary: '1 finding(s), 0 critical',
+      confidence: 0.9,
+      issuesFound: [finding],
+      createdAt: new Date('2026-11-08T10:00:00.000Z'),
+      updatedAt: new Date('2026-11-08T10:00:00.000Z'),
+    });
+    const svc = new UserDashboardService(prisma as unknown as PrismaService);
+    const result = await svc.getScan('org-test', 'run-mine-1');
+    expect((result as any).issuesFound).toEqual([finding]);
+    expect((result as any).outputSummary).toBe('1 finding(s), 0 critical');
+    const select = (prisma.verificationRun.findFirst.mock.calls[0][0] as any).select;
+    expect(select.issuesFound).toBe(true);
+  });
+
+  it('the scans list still omits the finding payload', async () => {
+    const { prisma, store, runs, entitlements } = fakePrisma();
+    seedOtherOrgData(store, runs, entitlements);
+    runs.push({
+      id: 'run-mine-1',
+      orgId: 'org-test',
+      product: 'invoice-proof',
+      sourceType: 'API',
+      status: 'FAILED',
+      riskLevel: 'MEDIUM',
+      inputSummary: 'my scan',
+      outputSummary: '1 finding(s), 0 critical',
+      confidence: 0.9,
+      issuesFound: [{ severity: 'medium', pattern: 'Missing / ghost PO', detail: 'detail', rows: ['INV-0001'] }],
+      createdAt: new Date('2026-11-08T10:00:00.000Z'),
+      updatedAt: new Date('2026-11-08T10:00:00.000Z'),
+    });
+    const svc = new UserDashboardService(prisma as unknown as PrismaService);
+    const result = await svc.getScans('org-test');
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).not.toHaveProperty('issuesFound');
+    const select = (prisma.verificationRun.findMany.mock.calls[0][0] as any).select;
+    expect(select.issuesFound).toBeUndefined();
+  });
+
   it('404s for another orgs scan id and for an unknown id', async () => {
     const { prisma, store, runs, entitlements } = fakePrisma();
     seedOtherOrgData(store, runs, entitlements);
