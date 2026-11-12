@@ -105,14 +105,18 @@ describe('AiAnalysisService Gemini-primary with Anthropic fallback', () => {
     const headers = (init as { headers: Record<string, string> }).headers;
     expect(headers['x-goog-api-key']).toBe('test-gemini-key');
     const body = JSON.parse((init as { body: string }).body) as {
-      generationConfig: { maxOutputTokens: number; responseMimeType: string };
+      generationConfig: { temperature: number; maxOutputTokens: number; responseMimeType: string };
       system_instruction: { parts: Array<{ text: string }> };
       contents: Array<{ parts: Array<{ text: string }> }>;
     };
     expect(body.generationConfig.responseMimeType).toBe('application/json');
     expect(body.generationConfig.maxOutputTokens).toBe(1200);
+    expect(body.generationConfig.temperature).toBe(0);
     expect(body.system_instruction.parts[0]!.text).toContain('verification analyst');
     expect(body.contents[0]!.parts[0]!.text).toContain('"a": 1');
+    const today = new Date().toISOString().split('T')[0];
+    expect(body.contents[0]!.parts[0]!.text).toContain(`Today's date is ${today}`);
+    expect(body.contents[0]!.parts[0]!.text).toContain('in the past, not the future');
   });
 
   it('(b) Gemini 429 → Anthropic success, fallback warning logged', async () => {
@@ -221,5 +225,28 @@ describe('AiAnalysisService Gemini-primary with Anthropic fallback', () => {
       source: 'Invoice INV-2, po_number',
       recommended_action: 'Obtain a PO number or written approval before paying.',
     });
+  });
+
+  it('(i) Anthropic fallback pins temperature to 0 and carries today in the prompt', async () => {
+    setKeys('test-gemini-key', 'sk-ant-test-key');
+    const fetchMock = vi.fn(async (url: unknown) =>
+      String(url).includes('generativelanguage') ? httpError(429) : anthropicOk(ANTHROPIC_TEXT),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await new AiAnalysisService().analyze('api_output', { payment_date: '2026-11-01' });
+
+    expect(result.llm_unavailable).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [url, init] = fetchMock.mock.calls[1]!;
+    expect(String(url)).toBe(ANTHROPIC_URL);
+    const body = JSON.parse((init as { body: string }).body) as {
+      temperature: number;
+      messages: Array<{ content: string }>;
+    };
+    expect(body.temperature).toBe(0);
+    const today = new Date().toISOString().split('T')[0];
+    expect(body.messages[0]!.content).toContain(`Today's date is ${today}`);
+    expect(body.messages[0]!.content).toContain('in the past, not the future');
   });
 });

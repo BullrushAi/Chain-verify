@@ -293,6 +293,8 @@ ${outputJson}`;
     default:
       return `Verify this ${task ?? 'general'} submission for issues and inconsistencies.
 
+DATE CONTEXT: Today's date is ${today}. A date on or before today is in the past, not the future.
+
 Check:
 - Are fields explicitly required by this task or the submitted data present and non-empty?
 - Are there internal contradictions in the data?
@@ -473,6 +475,7 @@ export class AiAnalysisService {
         body: JSON.stringify({
           model: this.model,
           max_tokens: this.maxTokens,
+          temperature: 0,
           system: SYSTEM_PROMPT,
           messages: [{ role: 'user', content: userPrompt }],
         }),
@@ -510,7 +513,7 @@ export class AiAnalysisService {
         body: JSON.stringify({
           system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
           contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-          generationConfig: { maxOutputTokens: this.maxTokens, responseMimeType: 'application/json' },
+          generationConfig: { temperature: 0, maxOutputTokens: this.maxTokens, responseMimeType: 'application/json' },
         }),
         signal: AbortSignal.timeout(15_000),
       });
