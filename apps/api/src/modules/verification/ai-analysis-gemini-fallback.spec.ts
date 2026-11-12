@@ -6,7 +6,7 @@ import { Logger } from '@nestjs/common';
 import { AiAnalysisService, AI_UNAVAILABLE } from './ai-analysis.service.js';
 
 const GEMINI_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent';
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 
 const GEMINI_TEXT = JSON.stringify({
@@ -101,6 +101,7 @@ describe('AiAnalysisService Gemini-primary with Anthropic fallback', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(String(url)).toBe(GEMINI_URL);
+    expect(GEMINI_URL).toContain('gemini-3.8-flash');
     const headers = (init as { headers: Record<string, string> }).headers;
     expect(headers['x-goog-api-key']).toBe('test-gemini-key');
     const body = JSON.parse((init as { body: string }).body) as {
